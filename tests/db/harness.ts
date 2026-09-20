@@ -15,13 +15,17 @@ const SEED_FILE = path.resolve(here, "../../supabase/seed.sql");
  * Supabase platform provisions before any project migration runs:
  * auth.users (with the raw_user_meta_data column handle_new_user() reads),
  * auth.uid() (reading the same request.jwt.claim.sub GUC PostgREST sets
- * per request), and the anon/authenticated/service_role roles with the
- * default table privileges Supabase grants on every new public table.
+ * per request), storage.objects (the table Supabase Storage's own RLS
+ * policies target — see the Phase 2A product-images storage migration),
+ * and the anon/authenticated/service_role roles with the default table
+ * privileges Supabase grants on every new public/storage table.
  *
  * This is not a substitute for testing against the real Supabase CLI +
- * Docker stack (no real GoTrue/PostgREST/Storage here) — see DATABASE.md
- * — but it runs our actual migration SQL and actual RLS policies against
- * a real Postgres, not a description of them.
+ * Docker stack (no real GoTrue/PostgREST/Storage service here — the
+ * storage.objects stub only has the columns our own policies reference,
+ * not Storage's full real schema) — see DATABASE.md — but it runs our
+ * actual migration SQL and actual RLS policies against a real Postgres,
+ * not a description of them.
  */
 export async function bootDb(): Promise<PGlite> {
   const db = new PGlite({ extensions: { postgis, pgcrypto } });
@@ -38,6 +42,22 @@ export async function bootDb(): Promise<PGlite> {
       select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
     $$;
 
+    create schema storage;
+    create table storage.objects (
+      id uuid primary key default gen_random_uuid(),
+      bucket_id text not null,
+      name text not null,
+      owner_id text,
+      created_at timestamptz not null default now()
+    );
+    -- Simplified vs. the real storage.foldername(), which drops the
+    -- trailing filename segment — every policy here only ever reads
+    -- index [1] (the leading "<product_id>/" segment), where the two
+    -- implementations agree.
+    create function storage.foldername(name text) returns text[]
+    language sql immutable as $$ select string_to_array(name, '/') $$;
+    alter table storage.objects enable row level security;
+
     create role anon nologin noinherit;
     create role authenticated nologin noinherit;
     create role service_role nologin noinherit bypassrls;
@@ -49,6 +69,9 @@ export async function bootDb(): Promise<PGlite> {
       grant usage, select on sequences to anon, authenticated, service_role;
     alter default privileges for role postgres in schema public
       grant execute on functions to anon, authenticated, service_role;
+
+    grant usage on schema storage to anon, authenticated, service_role;
+    grant select, insert, update, delete on storage.objects to anon, authenticated, service_role;
   `);
 
   return db;

@@ -150,6 +150,107 @@ extra abstraction and a second source of truth for the schema without a
 clear win here. Revisit if query complexity grows past what the builder
 handles comfortably.
 
+**Phase 2A: renamed enum labels (`RENAME VALUE`) rather than adding new
+ones or recreating the types.** The foundation phase's `product_status`
+had `active`/`sold`/`removed`; the agreed listing model wants
+`draft`/`published`/`archived` with no order-related state. Renaming
+`active` → `published` (and `product_condition`'s `new` → `excellent`)
+preserves the enum's OID, so every *stored* object that referenced the
+old label — RLS policies, the `product_locations_public` view —
+picks up the new one automatically, verified against a real engine
+before relying on it. One real exception found the same way:
+`search_nearby_products()`, a `language sql` function, does **not**
+get this for free — Postgres re-validates a SQL-language function's
+literal text against the current catalog on each call rather than
+freezing it at creation time, so its `'active'` literal had to be
+updated explicitly (`20260921090000_align_listing_labels.sql`) or every
+call failed with "invalid input value for enum". `sold`/`removed` are
+left as inert, never-written labels rather than dropped outright —
+Postgres has no `DROP VALUE` for enums, so removing them means
+recreating the type and cascading through every dependent view/policy/
+function for no functional gain this phase; revisit if a future phase
+actually wants to use one of them (e.g. Phase 4 wanting `sold`, Phase 9
+wanting `removed` for moderation) rather than doing it preemptively.
+
+**Phase 2A: made the `products_update_owner_or_admin` UPDATE policy's
+`WITH CHECK` explicit**, mirroring the same "make an implicit Postgres
+default visible" move as Phase 1's profiles-role hardening. Postgres
+already defaulted the check to the `USING` clause (verified, not
+assumed), so this doesn't change behavior — it just means "a seller
+can't reassign who owns a listing via UPDATE" is a line of SQL a future
+reader can see, not a fact they have to already know about Postgres.
+One genuinely new finding while testing this: an `UPDATE` that matches
+`USING` but then fails `WITH CHECK` *throws* ("new row violates
+row-level security policy"), unlike an `UPDATE` that never matched
+`USING` in the first place, which silently affects 0 rows — two
+different failure shapes for what looks like the same "blocked" outcome
+from the outside, both now covered by tests that got this wrong on the
+first pass and were corrected after checking real behavior instead of
+assuming it (same lesson as Phase 1, still worth re-learning per table).
+
+**Phase 2A: the `product-images` Storage bucket changed from public to
+private**, reversing the `public = true` set in the foundation phase's
+`supabase/config.toml`. That setting predated any real thought about
+draft-listing photo privacy; a public bucket serves objects from an
+endpoint that bypasses RLS entirely, which cannot satisfy "a draft
+listing's photos aren't publicly viewable." Reads now go through
+signed URLs (`src/server/listings/imageUrls.ts`), minted per-viewer
+from their own session so RLS still applies to who can get one.
+
+**Phase 2A: the listing create/edit UI only ever creates a `parent`-
+type listing, but the schema/RLS/server-action layer is fully
+`business`-listing-capable and tested as such.** There's no business
+storefront onboarding UI yet (that's Phase 7 — a business has to exist,
+and the current user has to be a member of it, before "list as this
+business" means anything in the UI). Rather than build a placeholder
+business-creation flow just to exercise the business path, the create
+action already accepts `sellerType`/`businessId` and relies on RLS's
+`is_business_member()` check exactly as a parent listing relies on
+`seller_profile_id = auth.uid()`, and `tests/db/listings.test.ts`
+creates businesses/members directly to prove a member can manage a
+business's listings and a non-member can't. This is the "if the schema
+can't safely support business-owned listings, stop and report" case
+from the Phase 2A brief resolving to "it already does" rather than a
+redesign.
+
+**Phase 2A: only a `draft` listing can be hard-deleted; anything else
+must be archived.** An application-level rule
+(`src/server/listings/actions.ts`), not an RLS one — RLS's own DELETE
+policy allows an owner to delete a listing in any status, which is
+intentionally left permissive at the database layer (useful for an
+admin/support cleanup path later) while the normal seller-facing
+`deleteListing` action narrows it. Reasoning: nothing references a
+draft listing yet (no orders, no favourites in practice), so deleting
+one is safe and total; a published-then-unlisted listing is closer to
+"this used to exist" and archiving preserves that instead of erasing
+it.
+
+**Phase 2A: images upload through the Server Action (server receives
+the `File` bytes), not a separate client-to-storage upload step.**
+Keeps "submit the form, get one outcome" simple for this phase, at the
+cost of routing image bytes through the Next.js server instead of
+straight to Supabase Storage from the browser. Revisit if listings
+start carrying many/large images and the extra hop becomes a real cost
+— see ARCHITECTURE.md.
+
+> **Known tech debt, deliberately not addressed now:** the current
+> architecture is unchanged as of this review — server-mediated upload
+> stays. Direct authenticated browser-to-Supabase-Storage uploads (the
+> client uploading straight to `storage.objects`, subject to the same
+> RLS policies in `20260921090200_product_images_storage_policies.sql`,
+> with the app only registering the resulting `product_images` row
+> afterward) may be worth considering later if listing volume or image
+> sizes make routing every photo's bytes through the Next.js server
+> inefficient. Not needed at this phase's scale; noted here so it isn't
+> rediscovered from scratch.
+
+**Phase 2A: no location field on the listing create/edit form.** Every
+migration and RLS policy involving `products.pickup_location_id` was
+already in place from the foundation phase (it's nullable), but
+collecting a pickup point needs a location picker, which is Nearby's
+concern (Phase 3), not identity/catalogue's — so every listing created
+this phase simply has `pickup_location_id = null` until then.
+
 ## Open — needs product/stakeholder input before the relevant phase
 
 1. **Which payment provider first?** PayFast and Yoco are the common
@@ -199,3 +300,18 @@ handles comfortably.
    confirmation flows (if enabled on a real project), and session
    persistence across a real refresh. First thing to do once real
    Supabase credentials exist.
+10. **Phase 2A: Storage's real HTTP layer hasn't been exercised
+    either** — same root cause as item 9. `tests/db/listings.test.ts`
+    proves the `storage.objects` RLS *policy logic* is correct against a
+    real Postgres engine, but PGlite has no actual Storage service, so
+    signed-URL generation, upload size/MIME enforcement, and the real
+    `storage.foldername()` behavior are unverified here. The
+    `product-images` bucket, its RLS policies, and
+    `src/server/listings/imageUrls.ts` should all be smoke-tested
+    against a real Supabase project before shipping the listing flow.
+11. **No business storefront onboarding UI exists yet**, so a real user
+    cannot actually reach the business-listing path this phase enables
+    at the schema/action layer (see the "decided" entry above) — only
+    tests can exercise it, by inserting a `businesses` row directly.
+    Needed before Phase 7, and worth knowing about sooner if the product
+    plan wants business sellers reachable earlier than that.

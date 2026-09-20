@@ -31,7 +31,11 @@ enabled = true
 file_size_limit = "10MiB"
 
 [storage.buckets.product-images]
-public = true
+# Private, not public: a public bucket serves objects from an endpoint
+# that bypasses RLS entirely, which can't keep a draft listing's photos
+# unlisted. Reads go through signed URLs instead — see
+# 20260921090200_product_images_storage_policies.sql.
+public = false
 file_size_limit = "5MiB"
 allowed_mime_types = ["image/png", "image/jpeg", "image/webp"]
 

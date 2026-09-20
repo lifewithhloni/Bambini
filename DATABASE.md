@@ -54,11 +54,69 @@ even though their shape is similar.
 
 `categories` is a self-referential tree (`parent_id`), seeded from the
 initial taxonomy in `supabase/seed.sql` — the app never hard-codes a
-category list. `products` references a single `category_id` (leaf
-category); `product_images` and `product_favourites` hang off it.
-`products.pickup_location_id` points at a `locations` row but — like
-every other reference to `locations` — the row itself is never exposed
-publicly; see the Nearby/location section of ARCHITECTURE.md.
+category list; `src/server/categories/getCategories.ts` reads it fresh
+and `src/server/categories/tree.ts` nests it into a tree/leaf-option
+list purely in application code. `products` references a single
+`category_id` (leaf category); `product_images` and
+`product_favourites` hang off it. `products.pickup_location_id` points
+at a `locations` row but — like every other reference to `locations` —
+the row itself is never exposed publicly; see the Nearby/location
+section of ARCHITECTURE.md. No listing created in Phase 2A sets a
+pickup location (there's no location picker yet — see DECISIONS.md), so
+it's simply null for now.
+
+### Listing lifecycle (Phase 2A)
+
+`product_status` is `draft` | `published` | `archived` — deliberately
+no order-related state (a listing becoming unavailable because it sold
+is Phase 4's concern, not the listing's own lifecycle). The foundation
+phase's enum had `active`/`sold`/`removed` instead;
+`20260921090000_align_listing_labels.sql` renames `active` to
+`published` (`sold`/`removed` are left as inert, unused labels — see
+DECISIONS.md for why removing them outright wasn't worth the risk).
+`product_condition` is `like_new` | `excellent` | `good` | `fair`
+(renamed from `new`/`like_new`/`good`/`fair` in the same migration).
+Allowed transitions are enforced in application code
+(`src/server/listings/statusTransitions.ts`), not the database: `draft`
+→ `published`/`archived`, `published` → `draft`/`archived`, `archived`
+→ `draft` only (re-publishing from archived must go through draft
+first). Publishing additionally requires at least one `product_images`
+row — enforced in `src/server/listings/actions.ts`, not RLS.
+
+### Listing ownership
+
+Unchanged pattern from the foundation phase (`seller_type` +
+`seller_profile_id`/`business_id`, see "Users and roles" above) — Phase
+2A's contribution is closing a gap the RLS policies for `products` had:
+`products_update_owner_or_admin` now carries an explicit `WITH CHECK`
+(`20260921090100_harden_listing_ownership.sql`) so a seller can't
+reassign a listing's `seller_profile_id`/`business_id` via `UPDATE`,
+verified against a real engine — Postgres actually already enforced
+this implicitly (an `UPDATE` policy with no `WITH CHECK` defaults to
+its `USING` clause), but making it explicit means a future reader
+doesn't have to know that. A business member (owner or anyone in
+`business_members`) can manage that business's listings exactly like an
+owner — see `is_business_member()`.
+
+### Product images and storage
+
+`product_images.storage_path` must start with `"<its own product_id>/"`
+— enforced by a `CHECK` constraint
+(`product_images_storage_path_matches_product`), not just RLS, so a
+listing's image rows can only ever reference files under its own
+storage folder, never another product's (even one the same seller
+owns). The `product-images` Supabase Storage bucket is **private**
+(`supabase/config.toml`, changed from public in the foundation phase) —
+a public bucket serves files from an endpoint that bypasses RLS
+entirely, which can't keep a draft listing's photos unlisted. Instead,
+`storage.objects` gets its own RLS policies
+(`20260921090200_product_images_storage_policies.sql`) mirroring the
+`products` table's own visibility rule exactly: upload/delete are
+owner-or-business-member-or-admin only (checked by extracting the
+leading `<product_id>/` path segment and joining back to `products`),
+and read follows `products.status = 'published' OR owner/member/admin`
+— so a stranger's browser can view a published listing's photos (via a
+signed URL, see ARCHITECTURE.md) but never a draft's.
 
 ## Commerce config
 
@@ -175,6 +233,9 @@ what goes in each and why they're separate.
 | `20260920091400_handle_new_user.sql` | Auto-create `profiles` on signup |
 | `20260920091500_rls_policies.sql` | RLS enable + policies for every table, `is_admin()`/`is_business_member()`, public views |
 | `20260920100000_restrict_insert_columns.sql` | Column-level INSERT grants on `profiles`/`businesses`/`business_verifications`/`identity_verifications` — closes a self-verification gap found in Phase 1, see DECISIONS.md |
+| `20260921090000_align_listing_labels.sql` | Renames `product_condition`/`product_status` enum labels to the agreed listing model; redefines `search_nearby_products()` for the renamed status |
+| `20260921090100_harden_listing_ownership.sql` | Explicit `WITH CHECK` on the `products` UPDATE policy; `product_images.storage_path` ↔ `product_id` binding constraint |
+| `20260921090200_product_images_storage_policies.sql` | RLS on `storage.objects` for the `product-images` bucket (upload/read/delete) |
 
 ## Local workflow
 
@@ -226,14 +287,24 @@ fresh engine and applying every migration takes ~15-20s per test file,
   forgery, whether exact coordinates ever leak through
   `product_locations_public` or `search_nearby_products()`, and that only
   `service_role` (never `authenticated`) can perform the writes the
-  architecture reserves for server-side code.
+  architecture reserves for server-side code. Also covers the Phase 1
+  business self-verification fix.
+- `tests/db/listings.test.ts` (Phase 2A) — listing lifecycle visibility
+  (draft/archived never public, published is), cross-seller
+  modification/deletion, ownership can't be assigned on `INSERT` or
+  reassigned on `UPDATE`, business-member vs. non-member authorization,
+  admin access, and `storage.objects` upload/read/delete policies for
+  the `product-images` bucket.
 
 **Limitations of this approach**, so results aren't over-trusted: PGlite
 is a real Postgres engine, but this is not the full Supabase platform —
-there's no real GoTrue, PostgREST, or Storage, and `auth.users`/
-`auth.uid()` are a small hand-built stand-in for what Supabase actually
-provisions (matched to the columns our migrations actually touch, e.g.
-`raw_user_meta_data`). A clean `tests/db` run is strong evidence the
-schema and RLS policies are internally consistent; it is not a
-substitute for running the real Supabase CLI + Docker stack at least
-once before production.
+there's no real GoTrue, PostgREST, or Storage service, and
+`auth.users`/`auth.uid()`/`storage.objects` are small hand-built
+stand-ins for what Supabase actually provisions (matched to the columns
+our migrations' own policies reference, e.g. `raw_user_meta_data` and
+`storage.foldername()`'s `[1]` index — not their full real schemas or
+HTTP-layer behavior like signed-URL generation or upload size/MIME
+enforcement). A clean `tests/db` run is strong evidence the schema and
+RLS policies are internally consistent; it is not a substitute for
+running the real Supabase CLI + Docker stack at least once before
+production.

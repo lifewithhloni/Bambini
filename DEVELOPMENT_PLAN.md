@@ -58,15 +58,41 @@ ends in a working, tested state before the next starts.
 - Not yet done: a real signup/login against actual Supabase Auth (no
   GoTrue available in this environment) — see DECISIONS.md item 9.
 
-## Phase 2 — Parent seller: list a product
+## Phase 2A — Listing foundation (parent + business seller compatible)
 
-- "Sell Something" flow: photos (Supabase Storage), category picker
-  (from `categories`), condition, price, collection/delivery toggle,
-  publish.
-- Seller's own listing management (edit, mark sold, archive).
-- Exit criteria: a parent can create, edit, and publish a listing end to
-  end; category tree is fully database-driven with no hard-coded list in
-  the app.
+**Status: done, pending real-Supabase-backend verification (see
+DECISIONS.md items 10-11).**
+
+- "Sell Something" flow: photos (private Supabase Storage bucket,
+  signed URLs), category picker (from `categories`, no hard-coded
+  list), condition (Like New/Excellent/Good/Fair), price (Rand input →
+  integer cents), description, collection/delivery toggle.
+- Explicit draft/published/archived lifecycle
+  (`src/server/listings/statusTransitions.ts`); publish requires at
+  least one photo; only a draft can be hard-deleted, anything else must
+  be archived.
+- Seller dashboard (`/sell`): view/create/edit/publish/unpublish/
+  archive/delete, grouped by status.
+- Public listing page (`/listings/[id]`): images, title, price,
+  condition, description, category, seller name + rating (via
+  `profiles_public`/`businesses_public`, never the raw row), collection/
+  delivery availability — never exact coordinates or private contact
+  info. No checkout yet.
+- Ownership hardening found and fixed: `products` UPDATE policy now has
+  an explicit `WITH CHECK` (was already enforced implicitly, verified);
+  `product_images.storage_path` is bound to its own `product_id` by a
+  `CHECK` constraint, closing a path where a seller could reference
+  another seller's uploaded file in their own listing.
+- Schema/RLS/action layer supports business-owned listings
+  (`seller_type = 'business'`, `is_business_member()`-checked) and is
+  tested as such — no business-listing UI toggle yet, since business
+  storefront onboarding (creating/joining a business) is Phase 7.
+- Exit criteria met: a parent can create, edit, publish, and archive a
+  listing end to end; category tree is fully database-driven; anonymous
+  users can only ever see published listings (proven by
+  `tests/db/listings.test.ts`, not just code review).
+- Not yet done: real Supabase Storage smoke test (no GoTrue/Storage
+  service available in this environment — see DECISIONS.md item 10).
 
 ## Phase 3 — Browse, search, nearby
 

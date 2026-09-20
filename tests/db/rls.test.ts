@@ -44,7 +44,7 @@ describe("RLS policies", () => {
     );
     await db.query(
       `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, pickup_location_id, status)
-       values ('parent', $1, $2, 'Bob Toy', 'good', 10000, $3, 'active')`,
+       values ('parent', $1, $2, 'Bob Toy', 'good', 10000, $3, 'published')`,
       [bob, cat.rows[0].id, bobLoc.rows[0].id],
     );
     const carolLoc = await db.query<{ id: string }>(
@@ -53,7 +53,7 @@ describe("RLS policies", () => {
     );
     await db.query(
       `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, pickup_location_id, status)
-       values ('parent', $1, $2, 'Carol Toy', 'good', 20000, $3, 'active')`,
+       values ('parent', $1, $2, 'Carol Toy', 'good', 20000, $3, 'published')`,
       [carol, cat.rows[0].id, carolLoc.rows[0].id],
     );
 
@@ -106,7 +106,7 @@ describe("RLS policies", () => {
       await asAnon(db, async () => {
         const profiles = await db.query(`select * from public.profiles_public`);
         expect(profiles.rows.length).toBeGreaterThan(0);
-        const products = await db.query(`select * from public.products where status = 'active'`);
+        const products = await db.query(`select * from public.products where status = 'published'`);
         expect(products.rows.length).toBe(2);
       });
     });

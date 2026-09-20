@@ -280,6 +280,67 @@ dispute resolves). Checkout only shows "Cash at Collection" when
 `seller_cash_status.is_eligible = true` for that seller, checked
 server-side at the time of purchase, not just at page-render time.
 
+## Listing / catalogue architecture (Phase 2A)
+
+**Categories** are read fresh from the database on every request
+(`src/server/categories/getCategories.ts`) and nested into a tree by a
+pure function (`src/server/categories/tree.ts`) — the app has no
+hard-coded category list anywhere; adding/renaming/reordering a
+category is a data change, not a deploy.
+
+**Listings** are `products` rows (see DATABASE.md for the schema/
+ownership details); the application layer's job is enforcing the rules
+RLS alone doesn't encode:
+
+- `src/server/listings/validation.ts` — zod schemas for create/update,
+  including a South African Rand → integer cents parser
+  (`src/server/listings/price.ts`) that never does float arithmetic on
+  the amount, and careful `null`/`undefined`/`""` normalization for
+  every optional field (`FormData.get()` returns `null` for a missing
+  field, which zod's own `.optional()` doesn't treat as absent the way
+  a genuinely-missing object key does — handled with `z.preprocess()`).
+- `src/server/listings/statusTransitions.ts` — the allowed
+  draft/published/archived transition graph, a pure function so the
+  same rule can gate a UI button (dimming "Publish" when it isn't a
+  legal move) and the server action that actually performs it.
+- `src/server/listings/actions.ts` — `createListing`, `updateListing`,
+  `changeListingStatus`, `deleteListing`, `addListingImages`,
+  `removeListingImage`. Every one calls `requireUser()` first and never
+  reads a seller/owner id from the submitted form — for a business
+  listing, `business_id` comes from the form (which business to list
+  under), but RLS's own `is_business_member()` check on the `INSERT` is
+  what actually authorizes it, not application code re-deriving
+  membership; a denied insert surfaces as the same generic error as any
+  other failure, deliberately not distinguishing "not a member" from
+  other failures. `updateListing`/`changeListingStatus`/`deleteListing`
+  treat "RLS filtered the row out" (0 rows affected/returned) and
+  "doesn't exist" identically — "Listing not found" either way — so a
+  stranger probing listing ids learns nothing. Publishing is blocked
+  server-side if the listing has zero photos; deleting is blocked
+  server-side unless the listing is still a draft (anything else must
+  be archived) — both are application-level rules layered on top of
+  RLS's ownership check, not replacements for it.
+
+**Images** upload through the Server Action, not directly
+browser-to-storage: the client submits `File` objects as part of the
+same `FormData` the rest of the listing form uses, and the server
+(using the *signed-in user's* Supabase client, so storage RLS still
+applies — not the service-role client) validates each file's MIME
+type and size (`src/server/listings/imageValidation.ts`, mirroring
+`supabase/config.toml`'s bucket limits exactly) before uploading to
+`storage.objects` at a `"<product_id>/<random>.<ext>"` path and
+inserting the matching `product_images` row. Chosen over a client-side
+upload flow to keep the "one form submission, one validated outcome"
+mental model simple for this phase, at the cost of routing image bytes
+through the Next.js server rather than straight to Storage — worth
+revisiting if listings start carrying many/large images.
+
+Displaying an image is the read side of the same private-bucket design:
+`src/server/listings/imageUrls.ts` generates a short-lived signed URL
+using the *viewer's* session, so a signed URL for a draft listing's
+photo can only ever be minted for someone RLS already lets see that
+listing — there is no stable public URL for any product image.
+
 ## Nearby / location privacy
 
 A seller's exact residential/pickup address is never sent to the client

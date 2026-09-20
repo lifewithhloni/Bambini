@@ -147,12 +147,12 @@ describe("database schema", () => {
     );
     await db.query(
       `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, pickup_location_id, status)
-       values ('parent', $1, $2, 'Near', 'good', 5000, $3, 'active')`,
+       values ('parent', $1, $2, 'Near', 'good', 5000, $3, 'published')`,
       [seller, cat.rows[0].id, near.rows[0].id],
     );
     await db.query(
       `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, pickup_location_id, status)
-       values ('parent', $1, $2, 'Far', 'good', 5000, $3, 'active')`,
+       values ('parent', $1, $2, 'Far', 'good', 5000, $3, 'published')`,
       [seller, cat.rows[0].id, far.rows[0].id],
     );
 
