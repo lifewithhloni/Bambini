@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:db": "vitest run --config vitest.db.config.mts",
     "db:migrate": "supabase db push",
     "db:types": "supabase gen types typescript --local > src/types/database.types.ts"
   },
@@ -25,6 +26,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-postgis": "^0.2.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24",
     "@types/react": "^19",

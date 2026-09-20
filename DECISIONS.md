@@ -6,6 +6,38 @@ rationale live only in commit messages or chat history.
 
 ## Decided
 
+**Database/RLS validation uses PGlite, not the Docker-based Supabase
+CLI, in environments without Docker.** `supabase start` requires Docker
+or Podman; neither is installed on this machine. Rather than only
+reviewing the migration SQL by eye, `tests/db/` boots
+[PGlite](https://pglite.dev) (real Postgres compiled to WASM, with a
+real PostGIS build) and runs the actual migrations and actual RLS
+policies against it, with a small hand-built `auth.users`/`auth.uid()`
+stand-in for what Supabase's platform provisions. This caught one real
+gap during validation: the hand-built `auth.users` stub was initially
+missing the `raw_user_meta_data` column that `handle_new_user()` reads —
+a test-harness fidelity bug, not a migration bug, fixed by matching the
+stub to Supabase's real `auth.users` shape. It is not a substitute for
+running the real Supabase CLI + Docker stack at least once — see
+DATABASE.md's "Automated tests" section for exactly what this does and
+doesn't prove.
+
+**Security-test assertions must check `affectedRows`, not just whether a
+statement throws.** An `UPDATE`/`DELETE` blocked by RLS does not raise a
+Postgres error — it silently matches 0 rows, identical to a `WHERE`
+clause that matches nothing. Early versions of the RLS test suite
+asserted "the statement must throw" for `UPDATE`s that should have been
+blocked (e.g. a seller updating `commissions`), which meant a query that
+was actually blocked correctly (0 rows affected, data unchanged) still
+reported as a failure. Fixed by asserting `affectedRows === 0` plus a
+follow-up read confirming the data genuinely didn't change, which is the
+same pattern already used correctly for the `orders`/`products` tests.
+`INSERT`s with no matching policy *do* throw ("new row violates
+row-level security policy"), so "cannot forge a row" assertions
+correctly expect a thrown error instead.
+
+
+
 **Business is a capability, not a profile role.** `profiles.role` is only
 `parent` or `admin`. A storefront (`businesses`) is owned by a profile
 and is additive. Rejected alternative: a `business` value on

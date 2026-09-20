@@ -190,9 +190,49 @@ A new migration: `supabase migration new <name>`, then edit the generated
 file under `supabase/migrations/`. Never edit a migration that has already
 been applied anywhere but local dev — add a new one instead.
 
-**Not yet done in this environment:** these migrations have been written
-and reviewed for syntax/ordering but have not been executed against a
-real Postgres instance here (no Docker available). Running
-`supabase db reset` locally and confirming a clean apply is the first
-thing to do before building on top of this schema — see
-[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
+**Still not done in this environment:** this machine has no Docker, so
+`supabase start`/`supabase db reset` themselves have not been run here —
+that's still the first thing to do in an environment that has Docker,
+before building on top of this schema. What *has* been done instead (see
+"Automated tests" below) is applying every migration and exercising the
+RLS policies against a real Postgres + PostGIS engine via PGlite, which
+caught and fixed one real gap (see [DECISIONS.md](DECISIONS.md)) before
+any UI was built on top of it.
+
+## Automated tests
+
+`tests/db/` runs the actual migration SQL and the actual RLS policies
+against a real Postgres engine — [PGlite](https://pglite.dev), Postgres
+compiled to WASM, with a real PostGIS build — via `npm run test:db`
+(kept separate from `npm run test`'s fast unit tests because booting a
+fresh engine and applying every migration takes ~15-20s per test file,
+~35-40s total).
+
+- `tests/db/harness.ts` — boots PGlite, applies every migration +
+  `seed.sql`, and provides `asUser()`/`asAnon()`/`asServiceRole()`
+  helpers that switch to the real `authenticated`/`anon`/`service_role`
+  Postgres roles and set the same `request.jwt.claim.sub` GUC
+  PostgREST sets per request, so `auth.uid()` behaves exactly as it does
+  against a live Supabase project.
+- `tests/db/schema.test.ts` — table/view/FK/index existence, money
+  columns are all `bigint`, the `seller_type` XOR pattern holds on every
+  polymorphic table, RLS is enabled everywhere it should be,
+  `search_nearby_products()` returns correct real distances, and
+  `transaction_events` genuinely rejects `UPDATE`/`DELETE`.
+- `tests/db/rls.test.ts` — the security checklist: anonymous access to
+  private tables, cross-user profile/order/product mutation, commission/
+  payment/payout/transaction-event forgery, cash-collection-confirmation
+  forgery, whether exact coordinates ever leak through
+  `product_locations_public` or `search_nearby_products()`, and that only
+  `service_role` (never `authenticated`) can perform the writes the
+  architecture reserves for server-side code.
+
+**Limitations of this approach**, so results aren't over-trusted: PGlite
+is a real Postgres engine, but this is not the full Supabase platform —
+there's no real GoTrue, PostgREST, or Storage, and `auth.users`/
+`auth.uid()` are a small hand-built stand-in for what Supabase actually
+provisions (matched to the columns our migrations actually touch, e.g.
+`raw_user_meta_data`). A clean `tests/db` run is strong evidence the
+schema and RLS policies are internally consistent; it is not a
+substitute for running the real Supabase CLI + Docker stack at least
+once before production.
