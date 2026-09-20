@@ -134,6 +134,13 @@ describe("database schema", () => {
   });
 
   it("computes real PostGIS distances and only returns nearby active products", async () => {
+    // Near = the buyer's own point (0 km); Far = ~40 km away (outside the
+    // default/10 km radius, inside the widest supported/50 km radius) —
+    // both within Phase 3B's fixed radius allowlist (5/10/25/50 km; see
+    // search_nearby_products()'s clamped_radius_km), unlike the old
+    // fixture pair (Cape Town/Johannesburg, ~1270 km apart), which no
+    // longer fits any supported radius now that the function clamps to
+    // that allowlist instead of accepting an arbitrary client radius.
     await db.query("reset role");
     const cat = await db.query<{ id: string }>(`select id from public.categories where slug = 'toys-baby' limit 1`);
     const seller = await makeUser(db, "Schema Test Seller");
@@ -142,7 +149,7 @@ describe("database schema", () => {
       [seller],
     );
     const far = await db.query<{ id: string }>(
-      `insert into public.locations (created_by, latitude, longitude) values ($1, -26.2041, 28.0473) returning id`,
+      `insert into public.locations (created_by, latitude, longitude) values ($1, -33.9346, 18.8600) returning id`,
       [seller],
     );
     await db.query(
@@ -165,9 +172,17 @@ describe("database schema", () => {
     expect(Number(nearby.rows[0].distance_km)).toBeCloseTo(0, 1);
 
     const wide = await db.query(`select 1 from public.search_nearby_products($1, $2, $3, null)`, [
-      -33.9249, 18.4241, 2000,
+      -33.9249, 18.4241, 50,
     ]);
     expect(wide.rows).toHaveLength(2);
+
+    // 2000 isn't one of the supported 5/10/25/50 km options, so it falls
+    // back to the 10 km default — same result as `nearby` above (only
+    // "Near"), never "everything within 2000 km".
+    const clamped = await db.query(`select 1 from public.search_nearby_products($1, $2, $3, null)`, [
+      -33.9249, 18.4241, 2000,
+    ]);
+    expect(clamped.rows).toHaveLength(1);
   });
 
   it("blocks UPDATE and DELETE on transaction_events even for the table owner", async () => {

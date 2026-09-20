@@ -11,6 +11,30 @@ import { assertTransition, canTransition, type ListingStatus } from "./statusTra
 
 export type ListingActionState = { error: string } | null;
 
+/**
+ * A listing's pickup_location_id is never taken from the submitted
+ * form — it's always resolved server-side from the seller's own saved
+ * location (profiles.location_id, set via /account/location), and only
+ * when collection is actually offered (a delivery-only listing has no
+ * pickup point to publish). This is what "connect listings to pickup
+ * location" means in practice (see DECISIONS.md): one location per
+ * seller, referenced by every listing that offers collection, never a
+ * per-listing address re-entered each time. The RLS WITH CHECK added in
+ * 20260923090000_nearby_search.sql is the actual boundary preventing a
+ * listing from ever referencing another seller's location — this
+ * function relying on the seller's own profile row is defense in depth
+ * on top of that, not a substitute for it.
+ */
+async function resolveOwnPickupLocationId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  collectionAvailable: boolean,
+): Promise<string | null> {
+  if (!collectionAvailable) return null;
+  const { data } = await supabase.from("profiles").select("location_id").eq("id", userId).maybeSingle();
+  return data?.location_id ?? null;
+}
+
 function extractImageFiles(formData: FormData): File[] {
   return formData
     .getAll("photos")
@@ -99,6 +123,15 @@ export async function createListing(_prev: ListingActionState, formData: FormDat
   if (imageError) return imageError;
 
   const supabase = await createClient();
+  // Business listings don't have a location workflow yet (business
+  // storefronts are Phase 7) — only a parent seller's own listing gets
+  // pickup_location_id auto-attached; a business listing is unaffected
+  // and simply doesn't participate in Nearby until that phase.
+  const pickupLocationId =
+    parsed.data.sellerType === "parent"
+      ? await resolveOwnPickupLocationId(supabase, user.id, parsed.data.collectionAvailable)
+      : null;
+
   const { data: product, error } = await supabase
     .from("products")
     .insert({
@@ -112,6 +145,7 @@ export async function createListing(_prev: ListingActionState, formData: FormDat
       price_cents: parsed.data.priceCents,
       collection_available: parsed.data.collectionAvailable,
       delivery_available: parsed.data.deliveryAvailable,
+      pickup_location_id: pickupLocationId,
       status: "draft",
     })
     .select("id")
@@ -139,7 +173,7 @@ export async function updateListing(
   _prev: ListingActionState,
   formData: FormData,
 ): Promise<ListingActionState> {
-  await requireUser();
+  const user = await requireUser();
 
   const parsed = updateListingSchema.safeParse({
     title: formData.get("title"),
@@ -155,6 +189,18 @@ export async function updateListing(
   }
 
   const supabase = await createClient();
+
+  // Re-resolved on every edit (not just at creation) so toggling
+  // collection back on, or saving a location for the first time after
+  // the listing already existed, attaches pickup_location_id
+  // retroactively rather than leaving it stuck at whatever was true when
+  // the listing was first created.
+  const { data: existing } = await supabase.from("products").select("seller_type").eq("id", listingId).maybeSingle();
+  const pickupLocationId =
+    existing?.seller_type === "parent"
+      ? await resolveOwnPickupLocationId(supabase, user.id, parsed.data.collectionAvailable)
+      : null;
+
   const { data: updated, error } = await supabase
     .from("products")
     .update({
@@ -165,6 +211,7 @@ export async function updateListing(
       description: parsed.data.description,
       collection_available: parsed.data.collectionAvailable,
       delivery_available: parsed.data.deliveryAvailable,
+      pickup_location_id: pickupLocationId,
     })
     .eq("id", listingId)
     .select("id")

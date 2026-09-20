@@ -127,15 +127,45 @@ DECISIONS.md items 12-13).**
 - Not yet done: real Supabase Storage/query-planner-at-scale
   verification (no Docker in this environment — see DECISIONS.md).
 
-## Phase 3B — Nearby
+## Phase 3B — Nearby + location privacy
 
-- Nearby (5/10/25/50 km) using `search_nearby_products()`.
-- Product detail page using `product_locations_public` for
-  suburb/city display.
-- Location picker for the listing create/edit form (Phase 2A
-  deliberately left `pickup_location_id` unset).
-- Exit criteria: nearby distance is correct and no raw coordinates ever
-  appear in a network response to the browser (verified by inspection).
+**Status: done, pending real-Supabase-backend verification (see
+DECISIONS.md items 14-15).**
+
+- `/nearby`: radius filter (5/10/25/50 km, clamped server- and
+  DB-side), preserves every `search_products()` filter (category,
+  price, condition, collection, delivery), sort (Distance/Newest/
+  Price asc/Price desc — distance computed and ordered by PostGIS,
+  never in React), pagination — all via `search_nearby_products()`
+  (extended in place from the foundation phase, see ARCHITECTURE.md),
+  called through `src/server/search/searchNearby.ts`.
+- `/account/location`: one saved location per seller/buyer
+  (`profiles.location_id`, unused since Phase 0), set via an explicit
+  "Use my current location" button (`navigator.geolocation`, never
+  automatic) plus self-reported suburb/city/province — no geocoding
+  provider, no full street address collected.
+- Listing create/edit auto-attaches the seller's own saved location to
+  `products.pickup_location_id` whenever collection is offered
+  (`resolveOwnPickupLocationId()`), never a client-supplied value.
+- Product detail page's `product_locations_public` suburb/city display
+  (Phase 2A) is unchanged — already correct for this phase.
+- Exit criteria met: nearby distance is correct (real PostGIS
+  computation, verified against real coordinates in
+  `tests/db/nearby.test.ts`) and no raw coordinates, address, or
+  location id ever appear in a public query response — proven by all
+  12 of the phase's required privacy tests passing against a real
+  Postgres/PostGIS engine, not just verified by inspection. A seller
+  cannot attach, retrieve, or mutate another seller's location, enforced
+  by RLS (`WITH CHECK`), not application code.
+- Found and fixed during this phase: a PL/pgSQL pitfall where
+  `ORDER BY distance_km` (referencing the SELECT list's own alias)
+  silently resolved to the function's always-`NULL` `RETURNS TABLE` OUT
+  parameter of the same name instead, making distance sort a no-op —
+  see ARCHITECTURE.md and the migration's own comment.
+- Not yet done: real Supabase geospatial query-plan verification at
+  scale, and real device GPS behavior (no Docker/real Supabase project
+  in this environment — see DECISIONS.md item 14); business seller
+  pickup locations (item 15, Phase 7 territory).
 
 ## Phase 4 — Checkout and payments (mock provider)
 

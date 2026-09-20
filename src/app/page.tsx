@@ -49,12 +49,17 @@ export default async function Home() {
           </button>
         </form>
 
-        <Link
-          href="/sell/new"
-          className="mt-2 rounded-full border border-brand-sage-dark px-5 py-2 text-sm font-medium text-brand-ink hover:bg-white"
-        >
-          + Sell something
-        </Link>
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
+          <Link
+            href="/sell/new"
+            className="rounded-full border border-brand-sage-dark px-5 py-2 text-sm font-medium text-brand-ink hover:bg-white"
+          >
+            + Sell something
+          </Link>
+          <Link href="/nearby" className="text-sm font-medium text-brand-ink hover:underline">
+            Browse what&apos;s nearby →
+          </Link>
+        </div>
       </section>
 
       <section className="border-t border-brand-border px-4 py-6 sm:px-6">

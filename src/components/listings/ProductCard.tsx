@@ -18,10 +18,13 @@ export function ProductCard({
   listing,
   imageUrl,
   categoryName,
+  distanceLabel,
 }: {
   listing: ListingSummary;
   imageUrl: string | null;
   categoryName?: string;
+  /** Pre-formatted (see src/server/search/distance.ts), Nearby-only — never a raw number, never derived here. */
+  distanceLabel?: string;
 }) {
   return (
     <Link
@@ -53,9 +56,10 @@ export function ProductCard({
             </>
           )}
         </div>
+        {distanceLabel && <p className="text-xs font-medium text-brand-sage-dark">{distanceLabel}</p>}
         <div className="mt-0.5 flex flex-wrap gap-1">
           {listing.collection_available && (
-            <span className="rounded-full bg-brand-sage/20 px-2 py-0.5 text-[11px] text-brand-ink">Collection</span>
+            <span className="rounded-full bg-brand-sage/20 px-2 py-0.5 text-[11px] text-brand-ink">Free collection</span>
           )}
           {listing.delivery_available && (
             <span className="rounded-full bg-brand-sage/20 px-2 py-0.5 text-[11px] text-brand-ink">Delivery</span>

@@ -61,9 +61,11 @@ list purely in application code. `products` references a single
 `product_favourites` hang off it. `products.pickup_location_id` points
 at a `locations` row but — like every other reference to `locations` —
 the row itself is never exposed publicly; see the Nearby/location
-section of ARCHITECTURE.md. No listing created in Phase 2A sets a
-pickup location (there's no location picker yet — see DECISIONS.md), so
-it's simply null for now.
+section of ARCHITECTURE.md. Phase 2A left it null for every listing
+(there was no location picker yet); Phase 3B sets it automatically
+(`resolveOwnPickupLocationId()` in `src/server/listings/actions.ts`) to
+the seller's own saved location whenever a listing offers collection —
+see "Nearby / location (Phase 3B)" below.
 
 ### Listing lifecycle (Phase 2A)
 
@@ -167,6 +169,58 @@ the existing single-column `products_category_id_idx` is judged
 sufficient at this phase's data volume; see DECISIONS.md if that needs
 revisiting later.
 
+### Nearby / location (Phase 3B)
+
+`locations` (`created_by`, `latitude`/`longitude`, a generated
+`geo geography(point,4326)` column, `suburb`/`city`/`province`/
+`postal_code`/`formatted_address`) and its GiST index
+(`locations_geo_idx`) both date to the foundation phase and are
+unchanged this phase — inspected first, per the "don't blindly replace
+existing location infrastructure" rule, and found already sufficient.
+What Phase 3B actually adds:
+
+- **`search_nearby_products()` extended in place**
+  (`20260923090000_nearby_search.sql`, `DROP FUNCTION` + `CREATE
+  FUNCTION` — a `RETURNS TABLE` function's output columns can't be
+  changed by `CREATE OR REPLACE`, only its body, verified against a real
+  engine before finalizing this). New signature: `category_filter uuid`
+  becomes `category_ids uuid[]` (matching `search_products()`'s resolved-
+  leaf-ids convention); adds `min_price_cents`, `max_price_cents`,
+  `condition_filter`, `collection_only`, `delivery_only`, `sort_key`
+  (`distance` default, plus `newest`/`price_asc`/`price_desc`),
+  `page_size`, `page_offset`. Returned columns drop `seller_type`,
+  `seller_profile_id`, `business_id` (never on the documented minimal
+  public field list this phase requires, and nothing in the app needs
+  them for a Nearby card) and add `collection_available`,
+  `delivery_available`, `created_at`, `cover_image_path`, `distance_km`,
+  `suburb`, `city`, `total_count` — the same fields `search_products()`
+  already returns, plus `distance_km`/`suburb`/`city`. Still `SECURITY
+  DEFINER`, for the reason explained in ARCHITECTURE.md (callers have no
+  SELECT grant on `locations` at all). `radius_km` is clamped to
+  `{5, 10, 25, 50}` inside the function (falls back to `10`) — an
+  arbitrary client-supplied radius is never honored verbatim.
+- **`products_pickup_location_id_idx`** — the one join in this query
+  (`locations` → `products` on `pickup_location_id`) that had no
+  supporting index; every other FK `products` is commonly joined through
+  already had one (see the Search/browse section above).
+- **Ownership hardening on `products.pickup_location_id`** —
+  `products_insert_owner` and `products_update_owner_or_admin` are
+  redefined (`DROP POLICY` + `CREATE POLICY`, since a `WITH CHECK`
+  expression can't be altered in place) adding: `pickup_location_id is
+  null or exists (select 1 from locations l where l.id =
+  pickup_location_id and l.created_by = auth.uid())`, admin-exempted on
+  UPDATE. Closes a real gap — until this migration, neither policy
+  constrained *which* location a listing could reference, only that the
+  listing itself belonged to the caller.
+
+`tests/db/nearby.test.ts` covers all of this against a real
+Postgres/PostGIS engine: the phase's 12 required privacy tests
+(anonymous/authenticated coordinate access, public-query column
+shape, cross-seller location-attachment/mutation/retrieval attempts,
+RPC-parameter tampering, unpublished/archived exclusion), plus radius
+boundaries, distance sorting, the preserved `search_products()` filters,
+and pagination.
+
 ## Commerce config
 
 Three tables make rules that would otherwise be hard-coded into
@@ -249,8 +303,11 @@ what goes in each and why they're separate.
 ## Functions
 
 - `is_admin()`, `is_business_member(business_id)` — RLS policy helpers.
+- `search_products(...)` — the single entry point for ordinary browse/
+  search (Phase 3A); not `SECURITY DEFINER`. See ARCHITECTURE.md.
 - `search_nearby_products(...)`, view `product_locations_public` — the
-  only sanctioned public reads of location data; see ARCHITECTURE.md.
+  only sanctioned public reads of location data; both `SECURITY
+  DEFINER`. See ARCHITECTURE.md.
 - `handle_new_user()` — creates a `profiles` row on `auth.users` insert.
 - `set_updated_at()` — generic `updated_at` maintenance trigger, applied
   to every table that has one.
@@ -286,6 +343,8 @@ what goes in each and why they're separate.
 | `20260921090100_harden_listing_ownership.sql` | Explicit `WITH CHECK` on the `products` UPDATE policy; `product_images.storage_path` ↔ `product_id` binding constraint |
 | `20260921090200_product_images_storage_policies.sql` | RLS on `storage.objects` for the `product-images` bucket (upload/read/delete) |
 | `20260922090000_search_products.sql` | `pg_trgm` extension + 3 new indexes; `search_products()` — the safe, parameterized, allowlisted-sort search/browse/filter/paginate entry point |
+| `20260923090000_nearby_search.sql` | `search_nearby_products()` extended (filters, pagination, distance/newest/price sort) via DROP + CREATE; `products_pickup_location_id_idx`; ownership `WITH CHECK` hardening on `products_insert_owner`/`products_update_owner_or_admin` for `pickup_location_id` |
+| `20260924090000_location_ownership_review_fixes.sql` | Security review follow-up: same ownership `WITH CHECK` extended to `profiles_insert_own`/`profiles_update_own_or_admin` for `location_id`; `search_nearby_products()`'s `EXECUTE` grant tightened to exclude the default `PUBLIC` grant |
 
 ## Local workflow
 
@@ -352,6 +411,32 @@ fresh engine and applying every migration takes ~15-20s per test file,
   terms and sort values never error or leak private data; `total_count`
   reflects only public rows; the function's return columns never
   include a seller/owner identifier.
+- `tests/db/nearby.test.ts` (Phase 3B) — the phase's 12 required privacy
+  tests (anonymous/authenticated exact-coordinate access, public-query
+  column shape, cross-seller location-attachment/mutation/retrieval
+  attempts including a direct join through `products` into `locations`,
+  RPC-parameter tampering — adversarial `sort_key`, an out-of-range
+  `radius_km`, a negative `page_offset`, `category_ids` — and
+  unpublished/archived exclusion), plus radius-boundary filtering
+  (5/10/25/50 km against real Cape Town-area coordinates), distance
+  sorting genuinely reordering results (not insertion order), every
+  `search_products()`-style filter still applying, pagination/
+  `total_count` correctness, confirmation that `search_nearby_products()`
+  *is* `SECURITY DEFINER` (the deliberate exception to `search_products()`
+  — see ARCHITECTURE.md), and that `products_pickup_location_id_idx`
+  exists.
+- `tests/db/location-ownership.test.ts` (Phase 3B security review) —
+  the four required `profiles.location_id` ownership cases (own
+  location, another user's, a nonexistent one, one not created by the
+  caller — enforced on both INSERT and UPDATE, admin exempted),
+  general location-mutation regression coverage (create/update own,
+  cannot modify or attach another's, cannot reference a fabricated id,
+  deleting a location cleanly nulls dependent references without
+  affecting an unrelated user's), and `SECURITY DEFINER` search_path
+  safety (`anon`/`authenticated` genuinely cannot `CREATE` in the
+  `public` schema, `search_nearby_products()`'s `search_path` is
+  pinned, and neither its `EXECUTE` grant nor
+  `product_locations_public`'s `SELECT` grant includes `PUBLIC`).
 
 **Limitations of this approach**, so results aren't over-trusted: PGlite
 is a real Postgres engine, but this is not the full Supabase platform —

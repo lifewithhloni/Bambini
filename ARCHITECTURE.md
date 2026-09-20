@@ -433,31 +433,141 @@ framework's raw error overlay. Confirmed by deliberately breaking
 Supabase connectivity in this environment and watching the page recover
 cleanly instead of returning a 500.
 
-## Nearby / location privacy
+## Nearby / location privacy (Phase 3B)
 
 A seller's exact residential/pickup address is never sent to the client
 in a public context. `locations` (precise `latitude`/`longitude`,
 `formatted_address`) has no public SELECT policy — full rows are only
-visible to their owner and admins. Public reads go through two
-sanctioned, narrow surfaces instead:
+visible to their owner and admins (`locations_select_own_or_admin`,
+foundation phase). Public reads go through two sanctioned, narrow
+surfaces instead:
 
-- `search_nearby_products(buyer_lat, buyer_lng, radius_km,
-  category_filter)` — a `SECURITY DEFINER` SQL function that does the
-  PostGIS distance computation server-side and returns only a rounded
-  `distance_km` (one decimal place) plus `suburb`/`city`, never raw
-  coordinates. This is the only path "Nearby" browsing uses.
+- `search_nearby_products(buyer_lat, buyer_lng, radius_km, category_ids,
+  min_price_cents, max_price_cents, condition_filter, collection_only,
+  delivery_only, sort_key, page_size, page_offset)` — a `SECURITY
+  DEFINER` PL/pgSQL function that does the PostGIS distance computation
+  server-side and returns only a rounded `distance_km` (one decimal
+  place) plus `suburb`/`city`, never raw coordinates, a location id, or
+  a seller identifier. This is the only path "Nearby" browsing uses —
+  extended in place in `20260923090000_nearby_search.sql` from the
+  foundation-phase version (which only took a single category id and had
+  no price/condition/collection/delivery filters, pagination, or sort
+  options) to structurally mirror `search_products()` (Phase 3A) exactly:
+  same filter set, same pagination shape (`page_size`/`page_offset` +
+  `count(*) over()` for `total_count`), same allowlist-inside-the-
+  function pattern for `sort_key` (adds `distance` to
+  `newest`/`price_asc`/`price_desc`). `radius_km` is clamped to the four
+  supported filter values (5/10/25/50 km) rather than accepted verbatim —
+  an out-of-range value falls back to the 10 km default, the same
+  "invalid input degrades to a sensible default" convention
+  `search_products()` uses for `sort_key`.
 - `product_locations_public` — a view exposing `suburb`/`city`/`province`
-  for a single active product's pickup point, for the product detail
+  for a single published product's pickup point, for the product detail
   page, again never raw coordinates or the formatted address.
 
 Both are `SECURITY DEFINER` (equivalently, views declared
-`security_invoker = false`), so they can read the locked-down
-`locations` table on the caller's behalf — but because they're
-hand-written to select only the safe columns/derived values, they can't
-leak more than that regardless of who calls them. The same pattern
-(`profiles_public`, `businesses_public`) hides other sensitive columns
-(e.g. a business's registration/VAT numbers) behind a curated public
-view rather than ever opening the raw table to `anon`/`authenticated`.
+`security_invoker = false`) for the same underlying reason: an
+anon/authenticated caller has no SELECT grant on `locations` at all, so
+a non-definer function or view joining into a seller's location row
+would simply see zero rows for every seller but the caller themselves.
+`SECURITY DEFINER` is what lets these two surfaces read a location the
+caller isn't allowed to query directly and hand back only the derived,
+public-safe fields — this is deliberately the opposite of
+`search_products()`, which is *not* `SECURITY DEFINER` because it never
+touches `locations` at all. The same pattern (`profiles_public`,
+`businesses_public`) hides other sensitive columns (e.g. a business's
+registration/VAT numbers) behind a curated public view rather than ever
+opening the raw table to `anon`/`authenticated`.
+
+**One location per seller, not one per listing.** `profiles.location_id`
+(foundation phase, previously unused by any UI) is the seller's single
+saved pickup/browsing point, set via `/account/location`
+(`src/app/account/location/`). A listing's `products.pickup_location_id`
+is never entered by the seller directly — `src/server/listings/
+actions.ts`'s `resolveOwnPickupLocationId()` sets it automatically to
+the caller's own `profiles.location_id` whenever the listing offers
+collection, and clears it to `null` when it doesn't (a delivery-only
+listing has no pickup point to publish, and never appears in Nearby,
+though it still appears in ordinary search). This is re-resolved on
+every create *and* edit, so saving a location for the first time, or
+toggling collection back on, retroactively attaches it. Business
+listings are left out of this for now — there's no business-location
+UI yet (Phase 7 territory) — so a business listing's
+`pickup_location_id` stays `null` and it simply doesn't participate in
+Nearby.
+
+**A listing can never reference another seller's location, enforced by
+RLS, not application code.** Neither `products_insert_owner` nor
+`products_update_owner_or_admin` used to constrain *which* location a
+listing could reference — only that the listing itself belonged to the
+caller. `20260923090000_nearby_search.sql` redefines both (DROP + CREATE
+POLICY — Postgres has no `ALTER POLICY` for changing a `WITH CHECK`
+expression) adding: `pickup_location_id is null or exists (select 1 from
+locations l where l.id = pickup_location_id and l.created_by =
+auth.uid())`, admin-exempted on UPDATE. The application layer never lets
+a client supply `pickup_location_id` directly (it's always computed
+server-side, above), but RLS is the actual security boundary — this
+stops a direct RPC/PostgREST call from a signed-in session bypassing the
+server action entirely, which is exactly what `tests/db/nearby.test.ts`
+proves (a `WITH CHECK` failure *throws* "new row violates row-level
+security policy" — a different RLS failure mode than a `USING` mismatch,
+which silently affects 0 rows; see `tests/db/rls.test.ts`'s header note).
+A follow-up security review found the identical gap on the *other* side
+of this relationship — nothing originally stopped a user pointing their
+own `profiles.location_id` at a location they didn't create either.
+Closed in `20260924090000_location_ownership_review_fixes.sql` with the
+same `WITH CHECK` shape on `profiles_insert_own`/
+`profiles_update_own_or_admin`; see DECISIONS.md and
+`tests/db/location-ownership.test.ts`.
+
+**Buyer location for Nearby reuses the same `profiles.location_id`,
+not a separate "search origin" concept.** In a peer-to-peer parent
+marketplace the same person buys and sells, so one saved location serves
+both "where I collect from" and "what am I near." `src/app/nearby/
+page.tsx` resolves the signed-in caller's own location server-side (raw
+lat/lng never reach the browser here — they're only used to build the
+RPC call) and shows a "Set your location to see items near you" prompt,
+linking to `/account/location`, for anyone signed out or without a saved
+location yet — never IP-based, never automatic browser geolocation.
+Location capture itself (`LocationForm.tsx`, a client component) only
+calls `navigator.geolocation.getCurrentPosition()` from an explicit "Use
+my current location" button click, never on page load — this is the one
+place raw coordinates are deliberately allowed to reach the browser,
+since it's the authenticated owner's own workflow of setting their own
+location, not browsing.
+
+**Distance sorting is computed by PostgreSQL, not React**, using the
+same `CASE WHEN normalized_sort = '...' THEN ... END` per-sort-option
+pattern as `search_products()`. One non-obvious PL/pgSQL pitfall,
+verified against a real engine and documented in the migration: a
+`RETURNS TABLE` function's output columns are also implicitly available
+inside the function body as PL/pgSQL variables of the same name (here,
+`distance_km`). Referencing that bare identifier in `ORDER BY` inside
+the embedded `RETURN QUERY SELECT ...` resolves to the *always-NULL*
+PL/pgSQL variable, not the query's own `SELECT`-list alias — it compiles
+and runs without error, but silently makes `distance` sorting a no-op
+(falling through to the `created_at desc` tiebreaker instead). The fix
+is to re-express the sort key as the underlying `st_distance(...)`
+expression rather than the alias — caught by `tests/db/nearby.test.ts`,
+not assumed correct from reading the SQL.
+
+**Indexing**: `locations_geo_idx` (a GiST index on the generated `geo
+geography` column) already existed from the foundation phase and is
+untouched — inspected before writing this phase's migration, and
+sufficient for `ST_DWithin`'s radius filtering. The one gap was on the
+`products` side of the join: `search_nearby_products()` starts from
+`locations` (filtered by `ST_DWithin`, using that GiST index) and joins
+into `products` on `pickup_location_id`, which had no index at all,
+unlike every other foreign key `products` is commonly joined through
+(`category_id`, `seller_profile_id`, `business_id` all already had
+one). `products_pickup_location_id_idx` closes that gap; nothing else
+was added.
+
+**Known limitation**: distance/geospatial query-plan behavior at real
+production data volumes (index-only scans, planner cost estimates versus
+PGlite's WASM Postgres) hasn't been verified against a real Supabase
+project in this environment — see Technical risks below and
+DECISIONS.md.
 
 ## Technical risks
 

@@ -139,6 +139,46 @@ describe("createListing", () => {
     expect(insertedPayload).not.toHaveProperty("sellerId");
   });
 
+  it("attaches the seller's own saved pickup location when collection is offered", async () => {
+    mockSupabase.queue("profiles", { data: { location_id: "loc-1" }, error: null });
+    mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
+    await expect(
+      createListing(null, formData({ ...validListingFields, collectionAvailable: "on" })),
+    ).rejects.toThrow(RedirectSignal);
+    const insertedPayload = (mockSupabase.chains.products[0].insert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertedPayload.pickup_location_id).toBe("loc-1");
+  });
+
+  it("never attaches a pickup location when collection isn't offered, even if the seller has one saved", async () => {
+    mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
+    await expect(
+      createListing(
+        null,
+        formData({ ...validListingFields, collectionAvailable: undefined, deliveryAvailable: "on" }),
+      ),
+    ).rejects.toThrow(RedirectSignal);
+    const insertedPayload = (mockSupabase.chains.products[0].insert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertedPayload.pickup_location_id).toBeNull();
+    expect(mockSupabase.fromCalls).not.toContain("profiles");
+  });
+
+  it("never resolves a pickup location for a business listing (no business location workflow yet)", async () => {
+    mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
+    await expect(
+      createListing(
+        null,
+        formData({
+          ...validListingFields,
+          sellerType: "business",
+          businessId: "22222222-2222-4222-8222-222222222222",
+        }),
+      ),
+    ).rejects.toThrow(RedirectSignal);
+    const insertedPayload = (mockSupabase.chains.products[0].insert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertedPayload.pickup_location_id).toBeNull();
+    expect(mockSupabase.fromCalls).not.toContain("profiles");
+  });
+
   it("creates as a draft regardless of what the client sends", async () => {
     mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
     await expect(createListing(null, formData(validListingFields))).rejects.toThrow(RedirectSignal);
@@ -196,26 +236,60 @@ describe("updateListing", () => {
     expect(mockSupabase.fromCalls).toEqual([]);
   });
 
-  it("scopes the update to the given listing id via .eq()", async () => {
+  it("scopes both the seller_type lookup and the update itself to the given listing id via .eq()", async () => {
+    mockSupabase.queue("products", { data: { seller_type: "parent" }, error: null });
     mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
     await updateListing("listing-1", null, formData(validListingFields));
-    const chain = mockSupabase.chains.products[0];
-    expect(chain.eq).toHaveBeenCalledWith("id", "listing-1");
+    expect(mockSupabase.chains.products[0].eq).toHaveBeenCalledWith("id", "listing-1");
+    expect(mockSupabase.chains.products[1].eq).toHaveBeenCalledWith("id", "listing-1");
   });
 
   it("reports 'not found' (not a silent success) when RLS filters out the row — not the seller's listing", async () => {
-    mockSupabase.queue("products", { data: null, error: null });
+    mockSupabase.queue("products", { data: null, error: null }); // seller_type lookup finds nothing
+    mockSupabase.queue("products", { data: null, error: null }); // update matches nothing either
     const result = await updateListing("someone-elses-listing", null, formData(validListingFields));
     expect(result).toEqual({ error: "Listing not found." });
   });
 
   it("never includes a seller/business/status field in the update payload", async () => {
+    mockSupabase.queue("products", { data: { seller_type: "parent" }, error: null });
     mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
     await updateListing("listing-1", null, formData(validListingFields));
-    const payload = (mockSupabase.chains.products[0].update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const payload = (mockSupabase.chains.products[1].update as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload).not.toHaveProperty("status");
     expect(payload).not.toHaveProperty("seller_profile_id");
     expect(payload).not.toHaveProperty("business_id");
+  });
+
+  it("re-resolves pickup_location_id from the seller's own saved location on every edit, for a parent listing offering collection", async () => {
+    mockSupabase.queue("products", { data: { seller_type: "parent" }, error: null });
+    mockSupabase.queue("profiles", { data: { location_id: "loc-1" }, error: null });
+    mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
+    await updateListing("listing-1", null, formData({ ...validListingFields, collectionAvailable: "on" }));
+    const payload = (mockSupabase.chains.products[1].update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.pickup_location_id).toBe("loc-1");
+  });
+
+  it("clears pickup_location_id when collection is toggled off, even if the seller has a saved location", async () => {
+    mockSupabase.queue("products", { data: { seller_type: "parent" }, error: null });
+    mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
+    await updateListing(
+      "listing-1",
+      null,
+      formData({ ...validListingFields, collectionAvailable: undefined, deliveryAvailable: "on" }),
+    );
+    const payload = (mockSupabase.chains.products[1].update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.pickup_location_id).toBeNull();
+    expect(mockSupabase.fromCalls).not.toContain("profiles");
+  });
+
+  it("never resolves a pickup location for a business listing (no business location workflow yet)", async () => {
+    mockSupabase.queue("products", { data: { seller_type: "business" }, error: null });
+    mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
+    await updateListing("listing-1", null, formData(validListingFields));
+    const payload = (mockSupabase.chains.products[1].update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.pickup_location_id).toBeNull();
+    expect(mockSupabase.fromCalls).not.toContain("profiles");
   });
 });
 

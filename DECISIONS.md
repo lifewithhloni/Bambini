@@ -325,6 +325,104 @@ connectivity in this environment (a placeholder, unreachable URL in
 instead of returning a 500 — a real, observed fix, not a hypothetical
 one.
 
+**Phase 3B: one saved location per seller (`profiles.location_id`,
+foundation-phase column, previously unused), not a location picker on
+each listing.** The brief's "prefer a normalized location reference"
+and "connect listings to pickup location" both point the same
+direction: a listing shouldn't carry its own copy of an address. The
+alternative — a location field on the create/edit listing form — would
+mean re-entering (or re-picking) the same pickup point for every single
+listing a seller creates, and would need its own per-listing ownership
+check identical to the one this phase already added for
+`pickup_location_id`. Instead, `/account/location` sets it once;
+`src/server/listings/actions.ts`'s `resolveOwnPickupLocationId()`
+auto-attaches it to any listing offering collection, on every create
+*and* edit (so saving a location for the first time after a listing
+already exists attaches it retroactively). Reused as the buyer's Nearby
+reference point too, for the same "one person, one location" reasoning
+— the marketplace is peer-to-peer, so the same profile is realistically
+both.
+
+**Phase 3B: no geocoding provider integration — "Use my current
+location" (explicit click) plus self-reported suburb/city/province text
+fields, not a typed address that gets geocoded.** A typed-address flow
+needs a geocoding API (Google/Mapbox/etc.), which means new external
+credentials and a new provider abstraction — real scope for a phase
+that's explicitly "ONLY about location, Nearby browsing, distance
+filtering, and collection-location privacy," and this environment has
+no such credentials available to test against anyway. The browser's own
+`navigator.geolocation`, gated behind an explicit button click (never
+called on page load — see the brief's "do NOT automatically capture
+precise browser location"), gives real coordinates for free; suburb/
+city/province are then just display metadata the user types themselves,
+not derived from the coordinates. Revisit if reverse geocoding
+(auto-filling suburb/city from the captured point) turns out to matter
+for signup friction — not built preemptively.
+
+**Phase 3B: `search_nearby_products()` was extended in place (`DROP
+FUNCTION` + `CREATE FUNCTION` in a new migration), not replaced with a
+second, separate Nearby function.** The brief explicitly asks to
+"extend it safely" if the existing function is suitable, and it was:
+correct `SECURITY DEFINER` boundary, correct `ST_DWithin`/`ST_Distance`
+usage, correct `status = 'published'` filter, all already in place since
+Phase 0. `CREATE OR REPLACE FUNCTION` can't be used here because both
+the argument list and the `RETURNS TABLE` column set change — Postgres
+rejects changing a set-returning function's output columns that way, so
+an explicit `DROP` naming the exact old signature is required first
+(verified against a real engine, not assumed from documentation).
+
+**Superseded by the Phase 3B security review, below: `profiles.location_id`
+originally shipped *without* the same location-ownership `WITH CHECK`
+that `products.pickup_location_id` got.** The reasoning at the time was
+that a malicious user pointing their own `profiles.location_id` at
+another user's `locations` row doesn't leak that row's contents (RLS
+still blocks any actual SELECT of it) — true, but it missed the actual
+invariant: a user's saved location must represent a location they're
+actually authorized to use as their own, regardless of whether misusing
+it happens to leak data elsewhere. A follow-up security review asked the
+right question directly and the gap was confirmed empirically (not just
+reasoned about) and closed in
+`20260924090000_location_ownership_review_fixes.sql` — `profiles_insert_own`
+and `profiles_update_own_or_admin` now carry the identical `WITH CHECK`
+`products` already had, admin-exempted on UPDATE. See
+`tests/db/location-ownership.test.ts` for the four cases (own location,
+another user's, a nonexistent one, one not created by the caller) and
+the general mutation-regression coverage the same review asked for.
+
+**Same review, same migration: `search_nearby_products()`'s `EXECUTE`
+grant was tightened to explicitly exclude `PUBLIC`.** `CREATE FUNCTION`
+grants `EXECUTE` to `PUBLIC` by default in Postgres — unlike tables and
+views, which get no implicit `PUBLIC` grant at all (confirmed for
+`product_locations_public` in the same test file). The original Phase
+3B migration granted `EXECUTE` to `anon`/`authenticated` without ever
+revoking that default, so `PUBLIC` (and, redundantly, the function
+owner and `service_role`) also technically had it. Not an active
+exploit in this project's role model — Supabase never lets a client
+request assume any role beyond `anon`/`authenticated`/`service_role`,
+and the function's own body already returns only public-safe data
+regardless of caller identity — but "explicitly appropriate" grants
+means precise, not "happens to be harmless today," so it's revoked
+from `PUBLIC` and re-granted to exactly the two roles that need it.
+
+**Phase 3B: business listings don't get pickup-location auto-attach
+this phase.** There's no business-location-setting UI yet (storefronts
+are Phase 7), and a business's pickup point isn't necessarily the
+listing member's own personal `profiles.location_id` — attaching the
+wrong thing automatically would be worse than leaving it unset. A
+business listing's `pickup_location_id` stays `null`, exactly as every
+listing's did before this phase; it simply doesn't participate in
+Nearby yet, with no regression to its normal-search visibility.
+
+**Phase 3B: `radius_km` is clamped to `{5, 10, 25, 50}` inside
+`search_nearby_products()` itself, not just validated in the app
+layer.** Same "don't trust one layer alone" reasoning as `sort_key`'s
+double allowlisting in Phase 3A — a direct RPC call bypassing
+`src/server/search/radius.ts` couldn't specify, say, a 5,000 km radius
+and turn Nearby into "everything, sorted by distance." An out-of-range
+value falls back to the 10 km default rather than erroring, consistent
+with every other "invalid input degrades to a sensible default" choice
+in this codebase.
+
 ## Open — needs product/stakeholder input before the relevant phase
 
 1. **Which payment provider first?** PayFast and Yoco are the common
@@ -408,3 +506,20 @@ one.
     leaf" and avoids building two different category-selection
     behaviors, but worth a product decision on whether `/search`'s
     dropdown should support parent categories directly later.
+14. **Phase 3B: `search_nearby_products()`'s real query-planner behavior
+    at scale, and real GPS accuracy on a real device, are both
+    unverified** — same root cause as items 9/10/12, no Docker/real
+    Supabase project in this environment. `tests/db/nearby.test.ts`
+    proves the function's *logic* is correct (privacy boundaries,
+    filters, radius clamping, sort, pagination) against a real Postgres
+    engine with real PostGIS and a handful of rows at real Cape Town-area
+    coordinates, but the GiST index's effectiveness at production row
+    counts, the join-then-filter vs. filter-then-join query plan
+    PostgreSQL actually picks at scale, and `navigator.geolocation`'s
+    real accuracy/permission-prompt behavior on an actual phone have not
+    been measured. Worth a look once real data and a real device exist.
+15. **Phase 3B: no business pickup-location workflow exists yet** (see
+    the "decided" entry above), so a business listing cannot currently
+    appear in Nearby at all. Needed before or alongside Phase 7's
+    business storefront work if business sellers should participate in
+    Nearby by then.

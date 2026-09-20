@@ -247,6 +247,52 @@ export type Database = {
         ];
       };
 
+      locations: {
+        // `geo` is a STORED GENERATED column (see
+        // 20260920090100_locations_and_profiles.sql) — Postgres rejects
+        // an INSERT/UPDATE that names it, so it's deliberately absent
+        // from Insert/Update, not just Row.
+        Row: {
+          id: string;
+          created_by: string | null;
+          label: string | null;
+          latitude: number;
+          longitude: number;
+          suburb: string | null;
+          city: string | null;
+          province: string | null;
+          postal_code: string | null;
+          formatted_address: string | null;
+          created_at: string;
+        };
+        Insert: {
+          created_by?: string | null;
+          label?: string | null;
+          latitude: number;
+          longitude: number;
+          suburb?: string | null;
+          city?: string | null;
+          province?: string | null;
+          postal_code?: string | null;
+          formatted_address?: string | null;
+        };
+        Update: Partial<{
+          label: string | null;
+          latitude: number;
+          longitude: number;
+          suburb: string | null;
+          city: string | null;
+          province: string | null;
+          postal_code: string | null;
+          formatted_address: string | null;
+        }>;
+        // created_by references auth.users(id), which this hand-maintained
+        // file doesn't model (only the public schema is typed here) — no
+        // app code joins through it, so left empty rather than asserting
+        // an inaccurate public-schema relationship.
+        Relationships: [];
+      };
+
       product_images: {
         Row: {
           id: string;
@@ -341,6 +387,43 @@ export type Database = {
           delivery_available: boolean;
           created_at: string;
           cover_image_path: string | null;
+          total_count: number;
+        }[];
+      };
+      // SECURITY DEFINER — unlike search_products(), this reads
+      // `locations` rows the calling role has no SELECT grant on (see
+      // 20260923090000_nearby_search.sql) and returns only the
+      // derived, public-safe fields below; it never returns latitude,
+      // longitude, or a location id.
+      search_nearby_products: {
+        Args: {
+          buyer_lat: number;
+          buyer_lng: number;
+          radius_km?: number | null;
+          category_ids?: string[] | null;
+          min_price_cents?: number | null;
+          max_price_cents?: number | null;
+          condition_filter?: ProductCondition | null;
+          collection_only?: boolean | null;
+          delivery_only?: boolean | null;
+          sort_key?: string | null;
+          page_size?: number | null;
+          page_offset?: number | null;
+        };
+        Returns: {
+          id: string;
+          title: string;
+          price_cents: number;
+          currency: string;
+          condition: ProductCondition;
+          category_id: string;
+          collection_available: boolean;
+          delivery_available: boolean;
+          created_at: string;
+          cover_image_path: string | null;
+          distance_km: number;
+          suburb: string | null;
+          city: string | null;
           total_count: number;
         }[];
       };

@@ -14,6 +14,9 @@ export async function SiteHeader() {
       </Link>
 
       <nav className="flex items-center gap-4">
+        <Link href="/nearby" className="text-sm font-medium text-brand-ink hover:underline">
+          Nearby
+        </Link>
         {user ? (
           <>
             <Link href="/sell" className="text-sm font-medium text-brand-ink hover:underline">

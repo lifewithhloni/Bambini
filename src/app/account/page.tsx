@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/server/auth/requireUser";
 import { ProfileForm } from "./ProfileForm";
@@ -40,6 +41,13 @@ export default async function AccountPage() {
           </dl>
 
           <ProfileForm fullName={profile.full_name} phone={profile.phone} />
+
+          <Link
+            href="/account/location"
+            className="rounded-full border border-brand-sage-dark px-4 py-2 text-center text-sm font-medium text-brand-ink hover:bg-brand-bg"
+          >
+            Set your location
+          </Link>
         </>
       )}
     </div>
