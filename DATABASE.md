@@ -118,6 +118,55 @@ and read follows `products.status = 'published' OR owner/member/admin`
 — so a stranger's browser can view a published listing's photos (via a
 signed URL, see ARCHITECTURE.md) but never a draft's.
 
+### Search and browse (Phase 3A)
+
+`search_products()` (`20260922090000_search_products.sql`) is the single
+entry point every browse/search/category page goes through — see
+ARCHITECTURE.md for the full rationale. It is **not** `SECURITY
+DEFINER`: it runs as the calling role (`anon`/`authenticated`), so it's
+subject to the same `products`/`product_images` RLS as any other query;
+its own explicit `status = 'published'` filter is defense in depth
+alongside RLS, the same pattern `getPublicListing()` already used in
+Phase 2A. `tests/db/search.test.ts` proves this empirically — a
+`prosecdef` check confirms the function isn't a definer, and confirms
+`total_count` and every result row only ever reflect published listings
+regardless of who's calling it, including the listing's own owner.
+
+Every filter parameter is a genuine bound `plpgsql` parameter, and
+`sort_key` is normalized against an explicit allowlist inside the
+function body (falls back to `'newest'` for anything else) — verified
+against adversarial input (SQL comment sequences, PostgREST-DSL special
+characters) in both `tests/db/search.test.ts` and
+`src/server/search/sort.test.ts`. Pagination is offset-based
+(`page_size`/`page_offset`, both clamped server-side) with a `count(*)
+over()` window function returning the total match count in the same
+query — one round trip instead of a separate `COUNT` query. Ordering
+always ends in `id desc` as a final tiebreaker, so two rows with the
+same price or timestamp never produce unstable/duplicated pages.
+
+New indexes, added because the two sort dimensions this phase
+introduces (`newest`, `price_asc`/`price_desc`) both filter by `status`
+*and* sort by one other column — a composite index serves filter+sort
+in one pass where the existing single-column `products_status_idx`
+would still need a separate sort step:
+
+- `products_status_created_at_idx (status, created_at desc)` — the
+  default "newest published" browse query.
+- `products_status_price_idx (status, price_cents)` — price-sorted
+  browse (btree scans either direction, so this covers both
+  `price_asc` and `price_desc`).
+- `products_title_trgm_idx` — a `pg_trgm` GIN index on `title`, since a
+  leading-wildcard `ILIKE '%term%'` (what free-text search needs) can't
+  use an ordinary btree index at all. Description search still works
+  (`title ILIKE ... OR description ILIKE ...`) but falls back to a
+  sequential scan for now — only `title` got a dedicated index; see
+  DECISIONS.md for why.
+
+No new index was added for `category_id` + status/sort combinations —
+the existing single-column `products_category_id_idx` is judged
+sufficient at this phase's data volume; see DECISIONS.md if that needs
+revisiting later.
+
 ## Commerce config
 
 Three tables make rules that would otherwise be hard-coded into
@@ -236,6 +285,7 @@ what goes in each and why they're separate.
 | `20260921090000_align_listing_labels.sql` | Renames `product_condition`/`product_status` enum labels to the agreed listing model; redefines `search_nearby_products()` for the renamed status |
 | `20260921090100_harden_listing_ownership.sql` | Explicit `WITH CHECK` on the `products` UPDATE policy; `product_images.storage_path` ↔ `product_id` binding constraint |
 | `20260921090200_product_images_storage_policies.sql` | RLS on `storage.objects` for the `product-images` bucket (upload/read/delete) |
+| `20260922090000_search_products.sql` | `pg_trgm` extension + 3 new indexes; `search_products()` — the safe, parameterized, allowlisted-sort search/browse/filter/paginate entry point |
 
 ## Local workflow
 
@@ -295,6 +345,13 @@ fresh engine and applying every migration takes ~15-20s per test file,
   reassigned on `UPDATE`, business-member vs. non-member authorization,
   admin access, and `storage.objects` upload/read/delete policies for
   the `product-images` bucket.
+- `tests/db/search.test.ts` (Phase 3A) — `search_products()` confirmed
+  not `SECURITY DEFINER`; draft/archived listings excluded from search
+  by title, by category filter, by price filter, by collection/delivery
+  filters, and across every page of pagination; adversarial search
+  terms and sort values never error or leak private data; `total_count`
+  reflects only public rows; the function's return columns never
+  include a seller/owner identifier.
 
 **Limitations of this approach**, so results aren't over-trusted: PGlite
 is a real Postgres engine, but this is not the full Supabase platform —

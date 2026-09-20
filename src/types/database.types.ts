@@ -316,7 +316,35 @@ export type Database = {
         ];
       };
     };
-    Functions: Record<string, never>;
+    Functions: {
+      search_products: {
+        Args: {
+          search_term?: string | null;
+          category_ids?: string[] | null;
+          min_price_cents?: number | null;
+          max_price_cents?: number | null;
+          condition_filter?: ProductCondition | null;
+          collection_only?: boolean | null;
+          delivery_only?: boolean | null;
+          sort_key?: string | null;
+          page_size?: number | null;
+          page_offset?: number | null;
+        };
+        Returns: {
+          id: string;
+          title: string;
+          price_cents: number;
+          currency: string;
+          condition: ProductCondition;
+          category_id: string;
+          collection_available: boolean;
+          delivery_available: boolean;
+          created_at: string;
+          cover_image_path: string | null;
+          total_count: number;
+        }[];
+      };
+    };
     Enums: {
       user_role: UserRole;
       verification_status: VerificationStatus;

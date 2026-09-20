@@ -249,7 +249,81 @@ migration and RLS policy involving `products.pickup_location_id` was
 already in place from the foundation phase (it's nullable), but
 collecting a pickup point needs a location picker, which is Nearby's
 concern (Phase 3), not identity/catalogue's — so every listing created
-this phase simply has `pickup_location_id = null` until then.
+this phase simply has `pickup_location_id = null` until then. Phase 3A
+(Browse & Search) doesn't touch it either, per its own brief — still
+`null`, still deferred to Phase 3B (Nearby).
+
+**Phase 3A: search/browse/filter/paginate all go through one Postgres
+function (`search_products()`), not query-building in application
+code.** Full rationale in ARCHITECTURE.md — in short, PostgREST's
+`.or()` filter-string DSL is the wrong tool for safely combining a
+user's free-text search term across two columns (the term itself can
+contain characters meaningful to that DSL), and a `plpgsql` function
+with real bound parameters sidesteps the whole class of problem rather
+than requiring careful escaping to be gotten right on every call site.
+Verified against adversarial input, not assumed — `tests/db/search.test.ts`
+throws SQL-comment sequences and PostgREST-DSL special characters at it
+and confirms the table survives and nothing leaks.
+
+**Phase 3A: sort is allowlisted twice — once in
+`src/server/search/sort.ts`, once again inside `search_products()`
+itself.** Belt and suspenders: the application-level allowlist is what
+a normal request goes through, but the database function doesn't trust
+that layer alone, in case a future caller (a script, a different route,
+a bug) calls the RPC directly with an unvalidated value. Both landed on
+the same three values (`newest`, `price_asc`, `price_desc`) rather than
+a more "flexible" approach (e.g. accepting a raw column name and
+direction) specifically because a client-suppliable column name is the
+textbook SQL-injection-adjacent footgun this avoids entirely.
+
+**Phase 3A: `pg_trgm`'s GIN index was only added for `title`, not
+`description`.** Title is what search primarily targets and what
+users actually scan when scrolling results; description search still
+works (`OR description ILIKE '%term%'`) but runs as a sequential scan
+for now. Adding the same index to `description` would roughly double
+the write-time cost of every listing create/update for a filter that's
+secondary today. Revisit if description search turns out to matter more
+than expected, or if profiling ever shows it as a real bottleneck —
+not something to guess at preemptively.
+
+**Phase 3A: no composite `(status, category_id, ...)` index was
+added**, even though "browse a category, sorted by X" is a real query
+shape. The existing single-column `products_category_id_idx` plus the
+new `(status, created_at)`/`(status, price_cents)` indexes are judged
+sufficient at this phase's data volume — Postgres can combine a
+category filter with either composite index reasonably well via a
+bitmap scan at small-to-medium row counts. Add a three-column composite
+if category-scoped browsing ever shows up as a real bottleneck at
+actual scale; not justified preemptively (see DEVELOPMENT_PLAN.md's
+rule against unnecessary complexity).
+
+**Phase 3A: the homepage has no "Popular" section, despite the brief
+asking for one "where supported by the current schema."** Read
+literally, that qualifier is doing real work: `product_favourites`
+exists in the schema, but zero application code reads or writes it (no
+favouriting UI has been built anywhere), so a "most favourited" query
+would be either permanently empty (a dead-looking UI element) or would
+require the favouriting *feature* to be built first — which is
+Browse & Search scope creep, not something this phase's brief asked
+for. The homepage's "Recently listed" section (genuine, real,
+`sort=newest` data) is what's actually shown, satisfying "recently
+listed" directly and "relevant" as a reasonable proxy, without
+inventing a signal the schema doesn't genuinely have yet. Revisit once
+a favouriting feature actually exists.
+
+**Phase 3A: added `src/app/error.tsx`, a Next.js error boundary, after
+finding search/browse pages crash with a raw 500 if Supabase is
+unreachable.** `getCategoryTree()` throws on failure and nothing was
+catching it. Unlike the site-wide header (which degrades to "logged
+out" — see the Phase 1 `getOptionalUser()` decision above), a
+marketplace page with no catalogue data has no meaningful degraded
+state to show, so the right fix is a clean, branded "something went
+wrong" message (Next's standard `error.tsx` convention), not silently
+hiding the failure. Confirmed by deliberately breaking Supabase
+connectivity in this environment (a placeholder, unreachable URL in
+`.env.local`) and watching the page recover with the new boundary
+instead of returning a 500 — a real, observed fix, not a hypothetical
+one.
 
 ## Open — needs product/stakeholder input before the relevant phase
 
@@ -315,3 +389,22 @@ this phase simply has `pickup_location_id = null` until then.
     tests can exercise it, by inserting a `businesses` row directly.
     Needed before Phase 7, and worth knowing about sooner if the product
     plan wants business sellers reachable earlier than that.
+12. **Phase 3A: `search_products()`'s real query-planner behavior at
+    scale is unverified** — same root cause as items 9/10, no Docker in
+    this environment. `tests/db/search.test.ts` proves the function's
+    *logic* is correct (filters, sort, pagination, visibility) against
+    a real Postgres engine with a handful of rows, and an `EXPLAIN`
+    sanity check during development confirmed the new indexes get used
+    at all, but real query plans, `pg_trgm` index effectiveness, and
+    actual latency at production-scale row counts haven't been measured
+    against a real Supabase project. Worth a look once real data exists.
+13. **Phase 3A: the `/search` page's category dropdown only offers leaf
+    categories** (reusing `getCategoryOptions()`, the same list the
+    listing-creation form uses), not top-level groups like "Clothing" —
+    so searching within a whole top-level category currently means
+    using `/category/clothing` (which does resolve every leaf
+    descendant) rather than picking "Clothing" from the `/search`
+    filter bar. Consistent with "a listing's category_id is always a
+    leaf" and avoids building two different category-selection
+    behaviors, but worth a product decision on whether `/search`'s
+    dropdown should support parent categories directly later.

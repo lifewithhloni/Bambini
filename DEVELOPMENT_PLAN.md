@@ -94,12 +94,46 @@ DECISIONS.md items 10-11).**
 - Not yet done: real Supabase Storage smoke test (no GoTrue/Storage
   service available in this environment — see DECISIONS.md item 10).
 
-## Phase 3 — Browse, search, nearby
+## Phase 3A — Marketplace browse & search
 
-- Category browse, keyword search, condition/price filters.
+**Status: done, pending real-Supabase-backend verification (see
+DECISIONS.md items 12-13).**
+
+- Public homepage (`/`): search bar, database-driven category nav,
+  "Recently listed" (real published data, no fabricated "Popular"
+  section — see DECISIONS.md), "Sell something" CTA.
+- Server-side search (`/search?q=...`): title + description, via a new
+  `search_products()` Postgres function — not client-side filtering,
+  not raw PostgREST `.or()` string-building (see DECISIONS.md).
+- Category browsing (`/category/[slug]`): parent categories resolve to
+  every leaf descendant's listings; leaf categories browse directly —
+  reuses the existing category tree, no duplicated category logic.
+- Filters (category, price min/max, condition, collection/delivery) and
+  sort (newest/price asc/price desc, double-allowlisted) — all
+  server-side, all shareable/bookmarkable URLs.
+- Deterministic offset pagination with a documented cursor-pagination
+  upgrade path for when the catalogue is large enough to need it.
+- Reusable `ProductCard`/`ListingGrid`, batched signed-URL image
+  fetching (no N+1).
+- Exit criteria met: `tests/db/search.test.ts` (20 tests) proves
+  anonymous users only ever see published listings through search, at
+  every filter combination and every page, and that a malicious sort
+  value can't reach an arbitrary column — not just verified by
+  inspection.
+- Found and fixed during this phase: search/browse pages crashed with a
+  raw 500 if Supabase was unreachable (`getCategoryTree()` threw
+  uncaught) — added `src/app/error.tsx`, a proper Next.js error
+  boundary.
+- Not yet done: real Supabase Storage/query-planner-at-scale
+  verification (no Docker in this environment — see DECISIONS.md).
+
+## Phase 3B — Nearby
+
 - Nearby (5/10/25/50 km) using `search_nearby_products()`.
 - Product detail page using `product_locations_public` for
   suburb/city display.
+- Location picker for the listing create/edit form (Phase 2A
+  deliberately left `pickup_location_id` unset).
 - Exit criteria: nearby distance is correct and no raw coordinates ever
   appear in a network response to the browser (verified by inspection).
 

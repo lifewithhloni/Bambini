@@ -9,7 +9,7 @@ export type PublicListing = {
   currency: string;
   collection_available: boolean;
   delivery_available: boolean;
-  category: { id: string; name: string } | null;
+  category: { id: string; name: string; slug: string } | null;
   images: string[]; // storage paths, not yet signed
   seller: { name: string; rating_average: number | null; rating_count: number } | null;
   location: { suburb: string | null; city: string | null; province: string | null } | null;
@@ -42,7 +42,7 @@ export async function getPublicListing(listingId: string): Promise<PublicListing
   if (error || !product) return null;
 
   const [{ data: category }, { data: location }] = await Promise.all([
-    supabase.from("categories").select("id, name").eq("id", product.category_id).maybeSingle(),
+    supabase.from("categories").select("id, name, slug").eq("id", product.category_id).maybeSingle(),
     supabase.from("product_locations_public").select("suburb, city, province").eq("product_id", product.id).maybeSingle(),
   ]);
 
@@ -76,7 +76,7 @@ export async function getPublicListing(listingId: string): Promise<PublicListing
     currency: product.currency,
     collection_available: product.collection_available,
     delivery_available: product.delivery_available,
-    category: category ? { id: category.id, name: category.name } : null,
+    category: category ? { id: category.id, name: category.name, slug: category.slug } : null,
     images,
     seller,
     location: location ?? null,

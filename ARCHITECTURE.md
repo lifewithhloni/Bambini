@@ -341,6 +341,98 @@ using the *viewer's* session, so a signed URL for a draft listing's
 photo can only ever be minted for someone RLS already lets see that
 listing — there is no stable public URL for any product image.
 
+## Search / browse architecture (Phase 3A)
+
+**Everything goes through one database function, not client-side
+filtering.** `search_products()` (see DATABASE.md) is called via
+`supabase.rpc()` from `src/server/search/searchListings.ts` — the
+homepage's "recently listed" teaser, `/search`, and `/category/[slug]`
+all call the exact same function with different arguments, rather than
+each building its own query or (worse) fetching a broad set of listings
+and filtering/sorting them in React. No page ever loads "the whole
+catalogue" — every request is a single, already-paginated, already-
+filtered round trip.
+
+**Why a Postgres function rather than composing the query with
+PostgREST filters in application code:** most of the individual filters
+(`.eq()`, `.gte()`, `.lte()`) are already safe/parameterized either way.
+The one that isn't straightforward is free-text search across two
+columns (`title` OR `description`) — PostgREST's `.or()` method takes a
+raw filter-string DSL where a user's own search term (containing a
+comma, parenthesis, or period) can be misinterpreted as a DSL delimiter
+rather than literal text. Hand-escaping that correctly for every case is
+exactly the kind of thing worth avoiding rather than getting subtly
+wrong once. A `plpgsql` function's parameters are genuine bound
+variables regardless of what the caller puts in them — verified against
+adversarial input (`term,with,commas`, `'; DROP TABLE products; --`,
+etc.) in `tests/db/search.test.ts`, not assumed. This mirrors the
+existing `search_nearby_products()` precedent from the foundation
+phase.
+
+**Sort is allowlisted twice.** `src/server/search/sort.ts` defines the
+only values a client can ever select (`newest`, `price_asc`,
+`price_desc`) and looks up a client-supplied value in that map — never
+interpolates it into a query. `search_products()` normalizes its own
+`sort_key` parameter against the same three values again, independently,
+inside the function body (falling back to `newest`). Neither layer ever
+lets a raw column name or SQL fragment reach an `ORDER BY`; the ordering
+itself is built from `CASE WHEN normalized_sort = '...' THEN column
+END` expressions, one per sort option, so exactly one is non-null for
+any given request and the others are no-ops. Every sort ends in `id
+desc` as a final tiebreaker, which is what keeps pagination
+deterministic — two rows can share a price or a timestamp, but never an
+id.
+
+**Filters are validated and normalized server-side**
+(`src/server/search/validation.ts`) before ever reaching
+`search_products()`: an invalid/unparseable value (a mistyped price, an
+unknown condition, a non-UUID category id) is silently dropped rather
+than rejected, so a bookmarked or shared search URL degrades to "that
+one filter didn't apply" instead of an error page. `sort` and `page`
+are the exceptions — they always resolve to *something* valid (default
+sort, clamped page number) since every search has to sort and paginate
+by something.
+
+**Category browsing resolves to leaf ids in application code, not
+SQL.** A listing's `category_id` always points at a leaf category (the
+create-listing form only ever offers leaves — see the Listing/catalogue
+section above), so browsing a parent category like "Clothing" has to
+match every one of its leaf descendants, not the literal "Clothing" id
+(no listing is ever tagged with that). `src/server/categories/tree.ts`'s
+`leafDescendantIds()` walks the already-fetched category tree to build
+that list; `search_products()` just takes a flat `category_ids` array
+and doesn't know or care about tree structure — category shape is
+defined in exactly one place.
+
+**Pagination is offset-based** (`page_size`/`page_offset`), computed
+from a page number by `src/server/search/pagination.ts`, with the total
+match count returned via a `count(*) over()` window function in the
+same query as the page of results — one round trip, not a separate
+`COUNT`. This is deliberately the simple choice for this phase's scale;
+if the catalogue grows large enough that a high page number's `OFFSET`
+becomes an expensive scan to skip past, cursor-based pagination (keyed
+off the same `(sort column, id)` tiebreaker already used for
+determinism) would be the natural next step — not needed yet.
+
+**Images for a grid of results are fetched once, not per-card.** A
+search results page collects every result's `cover_image_path` into one
+array and calls `getSignedImageUrls()` (the same batched Storage call
+Phase 2A's product/dashboard pages already use) a single time — never
+one signed-URL request per card.
+
+**Uncaught data-fetch failures now show a clean error state, not a
+crash.** Adding search/browse pages surfaced a real gap: unlike the
+site-wide header (which already degrades to "logged out" if Supabase is
+unreachable — see Authentication architecture), `getCategoryTree()`
+throws on failure, and nothing was catching that. A marketplace page
+with no catalogue data to show doesn't have a meaningful degraded state
+to fall back to, so the fix isn't to swallow the error — it's
+`src/app/error.tsx`, Next.js's standard error-boundary convention,
+which renders a branded "Something went wrong" message instead of the
+framework's raw error overlay. Confirmed by deliberately breaking
+Supabase connectivity in this environment and watching the page recover
+cleanly instead of returning a 500.
+
 ## Nearby / location privacy
 
 A seller's exact residential/pickup address is never sent to the client

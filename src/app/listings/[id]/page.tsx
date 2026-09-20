@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPublicListing } from "@/server/listings/getPublicListing";
 import { getSignedImageUrls } from "@/server/listings/imageUrls";
@@ -46,7 +47,11 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
           <ConditionBadge condition={listing.condition} />
         </div>
         <p className="text-2xl font-semibold text-brand-ink">{formatCentsAsRand(listing.price_cents)}</p>
-        {listing.category && <p className="text-sm text-brand-muted">{listing.category.name}</p>}
+        {listing.category && (
+          <Link href={`/category/${listing.category.slug}`} className="text-sm text-brand-muted hover:underline">
+            {listing.category.name}
+          </Link>
+        )}
       </div>
 
       {listing.description && <p className="whitespace-pre-wrap text-brand-ink">{listing.description}</p>}

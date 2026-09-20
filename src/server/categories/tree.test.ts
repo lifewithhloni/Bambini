@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCategoryTree, leafOptions, type FlatCategory } from "./tree";
+import { buildCategoryTree, categoryNamesById, findCategoryNode, leafDescendantIds, leafOptions, type FlatCategory } from "./tree";
 
 const flat: FlatCategory[] = [
   { id: "clothing", parent_id: null, name: "Clothing", slug: "clothing", sort_order: 1 },
@@ -53,5 +53,68 @@ describe("leafOptions", () => {
     const options = leafOptions(tree);
     expect(options.some((o) => o.id === "clothing")).toBe(false);
     expect(options.some((o) => o.id === "toys")).toBe(false);
+  });
+});
+
+describe("findCategoryNode", () => {
+  it("finds a top-level node by id", () => {
+    const tree = buildCategoryTree(flat);
+    expect(findCategoryNode(tree, { id: "toys" })?.id).toBe("toys");
+  });
+
+  it("finds a nested leaf node by id", () => {
+    const tree = buildCategoryTree(flat);
+    expect(findCategoryNode(tree, { id: "newborn" })?.id).toBe("newborn");
+  });
+
+  it("finds a node by slug", () => {
+    const tree = buildCategoryTree(flat);
+    expect(findCategoryNode(tree, { slug: "clothing-toddler" })?.id).toBe("toddler-clothing");
+  });
+
+  it("returns null for an id/slug that doesn't exist", () => {
+    const tree = buildCategoryTree(flat);
+    expect(findCategoryNode(tree, { id: "does-not-exist" })).toBeNull();
+    expect(findCategoryNode(tree, { slug: "does-not-exist" })).toBeNull();
+  });
+});
+
+describe("leafDescendantIds", () => {
+  it("returns just itself for a leaf node", () => {
+    const tree = buildCategoryTree(flat);
+    const newborn = findCategoryNode(tree, { id: "newborn" })!;
+    expect(leafDescendantIds(newborn)).toEqual(["newborn"]);
+  });
+
+  it("returns every leaf descendant for a top-level (parent) node — never the parent's own id, since no listing is ever tagged with it", () => {
+    const tree = buildCategoryTree(flat);
+    const clothing = findCategoryNode(tree, { id: "clothing" })!;
+    const ids = leafDescendantIds(clothing);
+    expect(ids.sort()).toEqual(["newborn", "toddler-clothing"].sort());
+    expect(ids).not.toContain("clothing");
+  });
+
+  it("handles a category with only one child", () => {
+    const tree = buildCategoryTree(flat);
+    const toys = findCategoryNode(tree, { id: "toys" })!;
+    expect(leafDescendantIds(toys)).toEqual(["baby-toys"]);
+  });
+});
+
+describe("categoryNamesById", () => {
+  it("maps every node's own name (not a path-prefixed label) by id, at every depth", () => {
+    const tree = buildCategoryTree(flat);
+    const names = categoryNamesById(tree);
+    expect(names).toEqual({
+      clothing: "Clothing",
+      toys: "Toys",
+      newborn: "Newborn",
+      "toddler-clothing": "Toddler",
+      "baby-toys": "Baby Toys",
+    });
+  });
+
+  it("returns an empty object for an empty tree", () => {
+    expect(categoryNamesById([])).toEqual({});
   });
 });
