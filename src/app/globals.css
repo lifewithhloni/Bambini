@@ -1,26 +1,36 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #faf8f5;
+  --foreground: #58564f;
+
+  /* Bambini brand palette, taken from the logo (Logo/1x/Artboard 1.png). */
+  --brand-bg: #faf8f5;
+  --brand-ink: #58564f;
+  --brand-muted: #8a8880;
+  --brand-sage: #9db5a3;
+  --brand-sage-dark: #6f8c7b;
+  --brand-peach: #e9c4a8;
+  --brand-border: #e3ded5;
+  --brand-danger: #b3564b;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-brand-bg: var(--brand-bg);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-muted: var(--brand-muted);
+  --color-brand-sage: var(--brand-sage);
+  --color-brand-sage-dark: var(--brand-sage-dark);
+  --color-brand-peach: var(--brand-peach);
+  --color-brand-border: var(--brand-border);
+  --color-brand-danger: var(--brand-danger);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }

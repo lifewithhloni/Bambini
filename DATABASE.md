@@ -174,6 +174,7 @@ what goes in each and why they're separate.
 | `20260920091300_functions_and_triggers.sql` | `updated_at` trigger, rating/stat aggregation, `search_nearby_products()` |
 | `20260920091400_handle_new_user.sql` | Auto-create `profiles` on signup |
 | `20260920091500_rls_policies.sql` | RLS enable + policies for every table, `is_admin()`/`is_business_member()`, public views |
+| `20260920100000_restrict_insert_columns.sql` | Column-level INSERT grants on `profiles`/`businesses`/`business_verifications`/`identity_verifications` — closes a self-verification gap found in Phase 1, see DECISIONS.md |
 
 ## Local workflow
 

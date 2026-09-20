@@ -311,4 +311,94 @@ describe("RLS policies", () => {
       });
     });
   });
+
+  describe("signup creates a profile automatically, defaulted to the parent role", () => {
+    it("handle_new_user() creates a profiles row with role='parent' from auth.users metadata", async () => {
+      const newUser = await makeUser(db, "Dana NewSignup");
+      const profile = await db.query<{ role: string; full_name: string }>(
+        `select role, full_name from public.profiles where id = $1`,
+        [newUser],
+      );
+      expect(profile.rows).toHaveLength(1);
+      expect(profile.rows[0].role).toBe("parent");
+      expect(profile.rows[0].full_name).toBe("Dana NewSignup");
+    });
+  });
+
+  describe("users cannot assign themselves admin or business privileges", () => {
+    it("cannot self-promote to admin via UPDATE (duplicates the profile test above from the profile's own perspective, pinned here as part of the role-protection checklist)", async () => {
+      // Unlike the orders/payments/commissions "no UPDATE policy" cases
+      // (which match 0 rows via RLS without throwing), `role` has no
+      // column-level UPDATE grant on `profiles` at all — Postgres checks
+      // column privileges before RLS even runs, so this throws
+      // "permission denied" rather than silently affecting 0 rows.
+      await asUser(db, carol, async () => {
+        await expect(db.query(`update public.profiles set role = 'admin' where id = $1`, [carol])).rejects.toThrow(
+          /permission denied/i,
+        );
+      });
+      const check = await db.query<{ role: string }>(`select role from public.profiles where id = $1`, [carol]);
+      expect(check.rows[0].role).toBe("parent");
+    });
+
+    it("cannot INSERT a profiles row setting role — the column isn't grantable, and the row already exists anyway (PK collision)", async () => {
+      const roleInsertable = await db.query<{ v: boolean }>(
+        `select has_column_privilege('authenticated', 'public.profiles', 'role', 'INSERT') as v`,
+      );
+      expect(roleInsertable.rows[0].v).toBe(false);
+      const fullNameInsertable = await db.query<{ v: boolean }>(
+        `select has_column_privilege('authenticated', 'public.profiles', 'full_name', 'INSERT') as v`,
+      );
+      expect(fullNameInsertable.rows[0].v).toBe(true);
+    });
+
+    it("cannot self-verify a business by setting verification_status on INSERT", async () => {
+      await asUser(db, bob, async () => {
+        await expect(
+          db.query(
+            `insert into public.businesses (owner_profile_id, business_name, slug, verification_status) values ($1, 'Bobs Shop', 'bobs-shop-forged', 'verified')`,
+            [bob],
+          ),
+        ).rejects.toThrow(/permission denied/i);
+      });
+    });
+
+    it("can create a business normally — it defaults to unverified", async () => {
+      const created = await asUser(db, bob, () =>
+        db.query<{ verification_status: string }>(
+          `insert into public.businesses (owner_profile_id, business_name, slug) values ($1, 'Bobs Real Shop', 'bobs-real-shop') returning verification_status`,
+          [bob],
+        ),
+      );
+      expect(created.rows[0].verification_status).toBe("unverified");
+    });
+
+    it("cannot mark their own business verification submission as already approved", async () => {
+      const business = await asUser(db, bob, () =>
+        db.query<{ id: string }>(
+          `insert into public.businesses (owner_profile_id, business_name, slug) values ($1, 'Bobs Verified Shop', 'bobs-verified-shop') returning id`,
+          [bob],
+        ),
+      );
+      await asUser(db, bob, async () => {
+        await expect(
+          db.query(
+            `insert into public.business_verifications (business_id, document_type, document_storage_path, status) values ($1, 'registration_certificate', 'verifications/x.pdf', 'verified')`,
+            [business.rows[0].id],
+          ),
+        ).rejects.toThrow(/permission denied/i);
+      });
+    });
+
+    it("cannot mark their own identity verification as already verified", async () => {
+      await asUser(db, carol, async () => {
+        await expect(
+          db.query(
+            `insert into public.identity_verifications (profile_id, provider, document_type, document_storage_path, status) values ($1, 'self', 'id_document', 'verifications/y.pdf', 'verified')`,
+            [carol],
+          ),
+        ).rejects.toThrow(/permission denied/i);
+      });
+    });
+  });
 });

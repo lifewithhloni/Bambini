@@ -37,13 +37,26 @@ ends in a working, tested state before the next starts.
 
 ## Phase 1 — Auth and profile foundation
 
-- Sign up / sign in / sign out (Supabase Auth, email + password to
-  start).
-- Profile completion flow (full name, phone, home location).
-- Basic account settings page.
-- Exit criteria: a user can register, land on a profile, and their
-  `profiles` row is correct; RLS verified by trying to read/write another
-  user's profile and being denied.
+**Status: done, pending real-Supabase-backend verification.**
+
+- Sign up / sign in / sign out (Supabase Auth, email + password).
+- `/account` (protected, server-rendered per-request) showing full
+  name/phone with an edit form; `handle_new_user()` from the foundation
+  phase creates the profile automatically.
+- Home-location editing deliberately **not** built this phase — it's a
+  location-picker UI that belongs with Nearby (Phase 3), not identity.
+- Protected-route pattern (`requireUser()`), a non-throwing variant for
+  UI that must degrade gracefully (`getOptionalUser()`), and an
+  open-redirect-safe `?next=` round-trip.
+- Exit criteria met: a user can register, land on a protected profile
+  page, and their `profiles` row is correct (role defaults to `parent`,
+  auto-created); RLS verified by both automated tests (`tests/db/`) and
+  a real HTTP round-trip through a browser attempting to read/write
+  another user's data.
+- Found and fixed during this phase: a business could be self-verified
+  via a crafted `INSERT` — see DECISIONS.md.
+- Not yet done: a real signup/login against actual Supabase Auth (no
+  GoTrue available in this environment) — see DECISIONS.md item 9.
 
 ## Phase 2 — Parent seller: list a product
 

@@ -36,7 +36,25 @@ same pattern already used correctly for the `orders`/`products` tests.
 row-level security policy"), so "cannot forge a row" assertions
 correctly expect a thrown error instead.
 
-
+**Found and fixed in Phase 1: a user could self-verify a business (or
+their own identity/business-verification submission) by including the
+status column in the row's very first `INSERT`.** The foundation-phase
+RLS policies restricted which columns a user could `UPDATE` on
+`profiles`/`businesses` (e.g. `verification_status` isn't grantable) but
+never applied the same restriction to `INSERT` — so
+`insert into businesses (owner_profile_id, business_name, slug,
+verification_status) values (auth.uid(), 'x', 'y', 'verified')` passed
+RLS (which only checked `owner_profile_id = auth.uid()`) and actually
+set `verification_status = 'verified'`, confirmed exploitable with a
+throwaway script before writing the fix. Migration
+`20260920100000_restrict_insert_columns.sql` mirrors the existing
+UPDATE column grants onto INSERT for `profiles`, `businesses`,
+`business_verifications`, and `identity_verifications`: the sensitive
+columns are simply not in the granted list, so they fall back to their
+`DEFAULT` (e.g. `'unverified'`) no matter what the client sends,
+regardless of whether application code remembers to omit them. Now
+permanently tested in `tests/db/rls.test.ts` ("users cannot assign
+themselves admin or business privileges").
 
 **Business is a capability, not a profile role.** `profiles.role` is only
 `parent` or `admin`. A storefront (`businesses`) is owned by a profile
@@ -44,6 +62,40 @@ and is additive. Rejected alternative: a `business` value on
 `profiles.role`, which would force a choice between "this person is a
 business" and "this person is a parent," directly contradicting "a
 parent can both buy and sell" (and, implicitly, also run a storefront).
+Phase 1's brief asked to "support the existing Bambini roles: parent,
+business, admin" and "not allow self-assignment of admin or business
+privileges" — read as *use the roles this schema already has* rather
+than *add a third enum value*, since the brief also says role changes
+must follow "the existing database/RLS architecture." "Business
+privileges" is therefore enforced as: a user can create a `businesses`
+row they own (Phase 7 will build the UI for this), but cannot set
+`verification_status`/`account_standing`/rating fields on it — see the
+INSERT-column-grant entry below, which is exactly this rule enforced at
+the database level, discovered while testing this phase's role
+protections.
+
+**Signed-up profiles are auto-created via a DB trigger, not application
+code, and start unverified.** `handle_new_user()` (from the foundation
+phase) already does this — Phase 1's sign-up Server Action never writes
+to `profiles` directly, it only calls `supabase.auth.signUp()` and lets
+the trigger do it. This is also what makes "duplicate/retry-safe" free:
+the trigger runs in the same transaction as the `auth.users` insert, so
+there's no window where an auth account exists without a profile, and a
+concurrent double sign-up just gets Supabase Auth's own duplicate-email
+error — no extra application code needed to guard against a race.
+
+**A page showing one user's own data is always `force-dynamic`,
+regardless of whether the build environment has real Supabase
+credentials.** `/account` is marked this way not to work around this
+sandbox's missing env vars (though it does that too) but because
+letting Next.js statically prerender a per-user page would risk serving
+one user's cached account page to everyone — a real correctness bug,
+not just a build nicety. Site-wide UI that reads auth state but isn't
+gating access (the header) instead uses `getOptionalUser()`, which
+swallows any error (missing config, unreachable Supabase) and renders
+"logged out" rather than take the whole page down — discovered because
+adding a Supabase-aware header to the root layout broke `npm run build`
+for every page, not just protected ones.
 
 **Money-moving tables get no direct client write access.** `orders`,
 `payments`, `commissions`, `payouts`, etc. are SELECT-only for
@@ -107,9 +159,10 @@ handles comfortably.
 2. **Which delivery provider first?** Needed before Phase 5. Affects
    what a real `DeliveryProvider` adapter has to handle (quote shape,
    booking flow, webhook vs. polling for status).
-3. **Auth methods beyond email/password** — phone/OTP is common for a SA
-   consumer audience and may matter more than social login. Needed before
-   Phase 1.
+3. **Auth methods beyond email/password.** Phase 1 implements only
+   email/password (as specified). Phone/OTP is common for a SA consumer
+   audience and may matter more than social login — worth deciding before
+   too much UI assumes email as the only identifier.
 4. **Cash eligibility default thresholds** — the seed values (3 completed
    transactions, 4.0 minimum rating, account + identity verification
    required, 0 unresolved disputes) are reasonable defaults, not a
@@ -132,3 +185,17 @@ handles comfortably.
    `major_version = 17`; confirm this matches whatever Supabase's CLI
    supports at the time `supabase start` is actually run, and adjust if
    not.
+9. **Phase 1 auth has not been tested against a real Supabase Auth
+   backend (no GoTrue).** Same root cause as item 6/DATABASE.md's
+   "Automated tests" limitation — no Docker in this environment, and no
+   hosted project configured. What *has* been verified: the schema/RLS
+   layer for real (`tests/db/`, including new signup/role-protection
+   cases), the Server Action logic in isolation (mocked Supabase client,
+   `src/server/auth/*.test.ts`), and the actual UI end-to-end against a
+   placeholder Supabase URL in a browser (forms submit, validation
+   errors render, the protected-route redirect and `?next=` round-trip
+   both work, the network failure surfaces correctly in the error state).
+   What hasn't: a real signup actually creating a session, email
+   confirmation flows (if enabled on a real project), and session
+   persistence across a real refresh. First thing to do once real
+   Supabase credentials exist.

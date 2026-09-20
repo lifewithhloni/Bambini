@@ -101,6 +101,44 @@ owning a row in `businesses` (see [DATABASE.md](DATABASE.md#users-and-roles)
 for why). This lets one person buy and sell as a parent *and* run a
 storefront, matching "a parent can both buy and sell."
 
+### Phase 1 implementation
+
+- **Pages**: `/signup`, `/login` (Client Components — forms need
+  `useActionState` for pending/error UI), `/account` (Server Component,
+  protected, `export const dynamic = "force-dynamic"` since it's
+  per-user data that must never be statically cached).
+- **Server Actions** (`src/server/auth/actions.ts`): `signUp`, `signIn`,
+  `signOut`. Every field comes from the submitted form and is validated
+  with zod (`src/server/auth/validation.ts`) before ever reaching
+  Supabase; there is no user-id field anywhere in the sign-up/sign-in
+  input — Supabase Auth derives the id, and `handle_new_user()` creates
+  the matching profile row in the same transaction, so there's no
+  client-supplied id for anything to trust. `signIn` returns a generic
+  "Incorrect email or password" on failure regardless of which part was
+  wrong, so the endpoint can't be used to enumerate registered emails.
+- **Protected routes**: `requireUser()` (`src/server/auth/requireUser.ts`)
+  is the authoritative gate — it re-verifies via `getUser()` (not
+  `getSession()`, which only decodes the local cookie without checking
+  it's still valid) and `redirect()`s to `/login?next=<path>` if there's
+  no session. It is called from the protected page itself, not relied on
+  via `proxy.ts` alone: per Supabase's current guidance, middleware
+  should refresh the session, not be the sole authorization gate, so a
+  misconfigured matcher can't silently leave a route unprotected.
+  `getOptionalUser()` is the sibling for UI that must never fail the page
+  it's on (the site header, which renders on every route including
+  statically-generated public ones) — it degrades to "logged out" rather
+  than throwing if Supabase is unreachable or unconfigured.
+- **Post-login redirect** (`next=`) is validated by `safeRedirectPath()`
+  to only ever accept a same-origin relative path, guarding against an
+  open-redirect (`?next=https://evil.example.com` falls back to
+  `/account`, not the attacker's URL).
+- **Profile editing** (`src/app/account/actions.ts`): scoped to
+  `requireUser()`'s verified id, never a value from the form — but the
+  real enforcement is the database's RLS policy plus the column-level
+  `GRANT` restricting which columns are writable at all (see below), so
+  the query being correctly scoped in application code is defense in
+  depth, not the security boundary itself.
+
 ## Authorization / RLS architecture
 
 Every table has Row Level Security enabled from its first migration —
