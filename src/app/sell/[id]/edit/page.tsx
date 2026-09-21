@@ -41,9 +41,17 @@ export default async function EditListingPage({
         </p>
       )}
 
-      <StatusActions listingId={listing.id} status={listing.status} />
-      <ImageManager listingId={listing.id} images={images} />
-      <EditListingForm listing={listing} categories={categories} />
+      {listing.status === "sold" ? (
+        <p className="rounded-lg bg-brand-sage/20 px-3 py-2 text-sm text-brand-ink">
+          This listing has been sold and can no longer be edited.
+        </p>
+      ) : (
+        <>
+          <StatusActions listingId={listing.id} status={listing.status} />
+          <ImageManager listingId={listing.id} images={images} />
+          <EditListingForm listing={listing} categories={categories} />
+        </>
+      )}
     </div>
   );
 }

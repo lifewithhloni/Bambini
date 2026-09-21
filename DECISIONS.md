@@ -423,6 +423,77 @@ value falls back to the 10 km default rather than erroring, consistent
 with every other "invalid input degrades to a sensible default" choice
 in this codebase.
 
+**Phase 4A: the foundation phase's inert `sold` `product_status` label
+becomes real — `create_order()` flips a listing `published` → `sold`
+atomically at purchase, rather than adding a new `is_available`/
+quantity column.** `statusTransitions.ts`'s own comment already flagged
+this exact moment: *"a listing becoming unavailable because it sold is
+an order-system concern for a later phase."* The seller's own
+draft/published/archived transition graph is deliberately untouched —
+`sold` is never a seller-initiated transition target, only something
+`create_order()` sets directly. This single atomic `UPDATE ... WHERE
+status = 'published'` is *both* the overselling guard and the
+duplicate-submission guard: Postgres's row lock means a second
+concurrent or retried request for the same listing always sees
+`status = 'sold'` and fails cleanly, whoever's request commits first
+wins — verified with a real concurrent-request test
+(`tests/db/orders.test.ts`), not assumed from the theory of row
+locking.
+
+**Phase 4A: `create_order()` is a new `SECURITY DEFINER` PL/pgSQL
+function — the second one added after `search_nearby_products()`, for
+a different but equally concrete reason.** No `INSERT` policy exists
+for `authenticated` on `orders`/`order_items`/`payments`/`commissions`/
+`transaction_events` at all (server-side-only writes, by design since
+the foundation phase), and a buyer has no ownership-based `UPDATE`
+grant on a product they don't own — a non-definer function would fail
+at its very first statement. Every value it writes is still derived
+from `auth.uid()` and the product row inside the function body, never
+a parameter; `SECURITY DEFINER` only removes the RLS obstacle to writes
+the function has already decided are legitimate. Same review checklist
+as the Phase 3B security review: explicit `search_path`,
+schema-qualified objects throughout, `EXECUTE` revoked from `PUBLIC`
+and `anon` and granted only to `authenticated` (the harness's own
+default-privileges grant, mirroring what a real Supabase project
+provisions, would otherwise leave both in place — caught by
+`tests/db/orders.test.ts`, the same gap the Phase 3B review found and
+fixed for `search_nearby_products()`).
+
+**Phase 4A: delivery destination reuses `profiles.location_id` (Phase
+3B's Nearby infrastructure) rather than a new per-order address
+field.** `orders.delivery_location_id` already existed and already
+required a value for `fulfilment_type = 'delivery'`
+(`orders_delivery_location_required`, foundation phase) — a checkout
+flow needs to supply *something*, and building a second
+location-capture UI just for delivery addresses would duplicate
+`/account/location` for no product reason at this phase's scale. If a
+buyer has no saved location, delivery is simply unavailable at checkout
+(collection still is, if the listing offers it) with a link to set one.
+
+**Phase 4A: no `seller_id` column was added, despite the brief's own
+generic data-model template listing one alongside
+`seller_profile_id`/`business_id`.** The existing `seller_type` +
+`seller_profile_id`/`business_id` pattern (identical to `products`,
+`reviews`, and everywhere else this schema represents "who's the
+seller") already fully expresses this — a redundant `seller_id` column
+would either duplicate one of the two existing columns or need its own
+synchronization logic for no benefit, and the brief's own overriding
+instruction ("follow the existing architecture... do not redesign the
+business architecture") points the same direction.
+
+**Phase 4A: business-seller checkout isn't reachable through any UI
+yet, and `create_order()` doesn't try to make it one.** There's no
+business-listing creation UI (Phase 2A left that at the schema/action
+layer only) and no business pickup-location workflow (Phase 3B, same
+reasoning) — so while `create_order()`'s business branch
+(`is_business_member()`, 1500 bps commission lookup) is real, tested,
+and reachable by inserting a `businesses`/business-owned `products` row
+directly (exactly how `tests/db/listings.test.ts` already exercises the
+business listing path), no real user can currently buy a business
+listing through the app. Consistent with every prior phase's treatment
+of business sellers — schema/logic first, UI when Phase 7 builds
+storefronts.
+
 ## Open — needs product/stakeholder input before the relevant phase
 
 1. **Which payment provider first?** PayFast and Yoco are the common
@@ -523,3 +594,22 @@ in this codebase.
     appear in Nearby at all. Needed before or alongside Phase 7's
     business storefront work if business sellers should participate in
     Nearby by then.
+16. **Phase 4A: `create_order()`'s real query-planner behavior and
+    transaction throughput at scale are unverified** — same root cause
+    as items 9/10/12/14, no Docker/real Supabase project in this
+    environment. `tests/db/orders.test.ts` proves the function's logic
+    is correct, including a genuine concurrent-request race test, but
+    real lock contention behavior under production-scale concurrent
+    checkout traffic (many buyers, many different listings at once, not
+    just two buyers racing one listing) hasn't been measured. Worth a
+    look once real traffic exists.
+17. **Phase 4A: editing a listing's title/price/category after it's
+    sold is now explicitly blocked** (`updateListing()` — see
+    DECISIONS.md's "decided" section) **but archiving/deleting a sold
+    listing was never addressed either way** — `changeListingStatus()`
+    already safely rejects any transition attempted *from* `sold`
+    (`isValidListingStatus('sold')` is `false`, so `canTransition`
+    returns `false` for any target), so this is a non-issue in practice,
+    but worth a conscious product decision later on whether a sold
+    listing should ever be able to move to `archived` for the seller's
+    own record-keeping.

@@ -251,6 +251,13 @@ describe("updateListing", () => {
     expect(result).toEqual({ error: "Listing not found." });
   });
 
+  it("refuses to edit a sold listing, without ever attempting the update", async () => {
+    mockSupabase.queue("products", { data: { seller_type: "parent", status: "sold" }, error: null });
+    const result = await updateListing("listing-1", null, formData(validListingFields));
+    expect(result).toEqual({ error: expect.stringMatching(/sold/i) });
+    expect(mockSupabase.fromCalls).toEqual(["products"]); // only the lookup — no update chain was created
+  });
+
   it("never includes a seller/business/status field in the update payload", async () => {
     mockSupabase.queue("products", { data: { seller_type: "parent" }, error: null });
     mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });

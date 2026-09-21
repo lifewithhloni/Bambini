@@ -10,7 +10,7 @@ export type EditableListing = {
   description: string | null;
   collection_available: boolean;
   delivery_available: boolean;
-  status: "draft" | "published" | "archived";
+  status: "draft" | "published" | "archived" | "sold";
   seller_type: "parent" | "business";
   seller_profile_id: string | null;
   business_id: string | null;

@@ -15,11 +15,35 @@ type VerificationStatus = "unverified" | "pending" | "verified" | "rejected";
 type AccountStanding = "good" | "warned" | "suspended";
 type UserRole = "parent" | "admin";
 type SellerType = "parent" | "business";
-// The DB enum also has unused legacy labels 'sold'/'removed' (see
-// DECISIONS.md) — the app never reads or writes them, so they're
-// deliberately left out of this narrower, app-facing type.
-type ProductStatus = "draft" | "published" | "archived";
+// 'sold' is a real, app-written value as of Phase 4A — create_order()
+// transitions a listing 'published' -> 'sold' atomically at purchase
+// (see supabase/migrations/20260925090000_orders_checkout.sql). Only
+// that function ever writes it; the seller's own status-change UI
+// (src/server/listings/statusTransitions.ts) still only knows about
+// draft/published/archived, deliberately — a sold listing isn't a
+// seller-initiated transition target. 'removed' remains the one
+// genuinely unused legacy label (see DECISIONS.md).
+type ProductStatus = "draft" | "published" | "archived" | "sold";
 type ProductCondition = "like_new" | "excellent" | "good" | "fair";
+type FulfilmentType = "collection" | "delivery";
+type PaymentMethod = "online" | "cash";
+// The DB enum has more values (ready_for_collection, awaiting_delivery,
+// in_transit, disputed, refunded) than Phase 4A ever writes — 'confirmed'
+// is the eventual "payment succeeded" transition a real payment provider
+// will drive later; this phase only ever creates orders at
+// 'pending_payment' and reads back whatever a future phase writes, so the
+// full enum is typed even though only two values are reachable today.
+type OrderStatus =
+  | "pending_payment"
+  | "confirmed"
+  | "ready_for_collection"
+  | "awaiting_delivery"
+  | "in_transit"
+  | "completed"
+  | "cancelled"
+  | "disputed"
+  | "refunded";
+type PaymentStatus = "pending" | "authorized" | "paid" | "failed" | "refunded" | "partially_refunded";
 
 export type Database = {
   public: {
@@ -316,6 +340,164 @@ export type Database = {
           },
         ];
       };
+
+      // orders/order_items/payments/commissions: every write goes
+      // through create_order() (SECURITY DEFINER — see
+      // 20260925090000_orders_checkout.sql), never a direct
+      // .insert()/.update() from application code — RLS wouldn't allow
+      // it if it tried (SELECT-only policies for `authenticated`; see
+      // 20260920091500_rls_policies.sql). Insert/Update are still typed
+      // (as `never`, since nothing should ever construct one) rather
+      // than omitted — the Supabase client's generic constraint requires
+      // every table to have all four members, and omitting them broke
+      // type inference for every *other* table in this file too, not
+      // just these ones (caught by `npm run typecheck` immediately
+      // going from 0 to ~90 errors across unrelated files).
+      orders: {
+        Row: {
+          id: string;
+          order_reference: string;
+          buyer_id: string;
+          seller_type: SellerType;
+          seller_profile_id: string | null;
+          business_id: string | null;
+          fulfilment_type: FulfilmentType;
+          payment_method: PaymentMethod;
+          status: OrderStatus;
+          subtotal_cents: number;
+          delivery_fee_cents: number;
+          total_cents: number;
+          commission_rate_bps: number;
+          commission_amount_cents: number;
+          currency: string;
+          delivery_location_id: string | null;
+          created_at: string;
+          updated_at: string;
+          completed_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "orders_buyer_id_fkey";
+            columns: ["buyer_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "orders_seller_profile_id_fkey";
+            columns: ["seller_profile_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "orders_business_id_fkey";
+            columns: ["business_id"];
+            referencedRelation: "businesses";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      order_items: {
+        Row: {
+          id: string;
+          order_id: string;
+          product_id: string;
+          title_snapshot: string;
+          price_cents_snapshot: number;
+          quantity: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "order_items_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_items_product_id_fkey";
+            columns: ["product_id"];
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      payments: {
+        Row: {
+          id: string;
+          order_id: string;
+          provider_id: string | null;
+          provider_reference: string | null;
+          method: PaymentMethod;
+          status: PaymentStatus;
+          amount_cents: number;
+          currency: string;
+          raw_payload: Record<string, unknown> | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "payments_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      commissions: {
+        Row: {
+          id: string;
+          order_id: string;
+          seller_type: SellerType;
+          rate_bps: number;
+          base_amount_cents: number;
+          commission_amount_cents: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "commissions_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      transaction_events: {
+        Row: {
+          id: string;
+          order_id: string | null;
+          entity_type: string;
+          entity_id: string;
+          event_type: string;
+          actor_type: string;
+          actor_id: string | null;
+          payload: Record<string, unknown>;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "transaction_events_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       profiles_public: {
@@ -427,6 +609,23 @@ export type Database = {
           total_count: number;
         }[];
       };
+      // SECURITY DEFINER — needed because no INSERT policy exists on
+      // orders/order_items/payments/commissions/transaction_events for
+      // `authenticated` (server-side-only writes, by design) and a buyer
+      // has no ownership-based UPDATE grant on a product they don't own.
+      // Every value it writes is derived inside the function body from
+      // auth.uid() and the product row — see
+      // 20260925090000_orders_checkout.sql.
+      create_order: {
+        Args: {
+          p_product_id: string;
+          p_fulfilment_type: FulfilmentType;
+        };
+        Returns: {
+          order_id: string;
+          order_reference: string;
+        }[];
+      };
     };
     Enums: {
       user_role: UserRole;
@@ -435,6 +634,10 @@ export type Database = {
       seller_type: SellerType;
       product_status: ProductStatus;
       product_condition: ProductCondition;
+      fulfilment_type: FulfilmentType;
+      payment_method: PaymentMethod;
+      order_status: OrderStatus;
+      payment_status: PaymentStatus;
     };
   };
 };

@@ -5,6 +5,8 @@ import { getPublicListing } from "@/server/listings/getPublicListing";
 import { getSignedImageUrls } from "@/server/listings/imageUrls";
 import { formatCentsAsRand } from "@/server/listings/price";
 import { ConditionBadge } from "@/components/listings/ConditionBadge";
+import { getOptionalUser } from "@/server/auth/requireUser";
+import { createClient } from "@/lib/supabase/server";
 
 // A published listing's visibility can change at any time (the seller
 // unpublishes it) and it shows another user's live rating — never
@@ -13,10 +15,22 @@ export const dynamic = "force-dynamic";
 
 export default async function ListingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const listing = await getPublicListing(id);
+  const [listing, viewer] = await Promise.all([getPublicListing(id), getOptionalUser()]);
   if (!listing) notFound();
 
   const imageUrls = await getSignedImageUrls(listing.images);
+
+  // getPublicListing() deliberately doesn't return seller_profile_id (its
+  // own "public" type never carries raw identifiers) — a small separate
+  // check here, only ever used to decide whether "Buy now" renders, never
+  // the actual purchase authorization (create_order() re-derives and
+  // re-checks this itself regardless — see 20260925090000_orders_checkout.sql).
+  let isOwnListing = false;
+  if (viewer) {
+    const supabase = await createClient();
+    const { data: product } = await supabase.from("products").select("seller_profile_id").eq("id", id).maybeSingle();
+    isOwnListing = product?.seller_profile_id === viewer.id;
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-8 sm:py-12">
@@ -83,6 +97,15 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
             )}
           </div>
         </div>
+      )}
+
+      {!isOwnListing && (
+        <Link
+          href={viewer ? `/checkout/${listing.id}` : `/login?next=${encodeURIComponent(`/checkout/${listing.id}`)}`}
+          className="w-full rounded-full bg-brand-sage-dark px-4 py-3 text-center text-sm font-medium text-white hover:bg-brand-sage"
+        >
+          Buy now
+        </Link>
       )}
     </div>
   );

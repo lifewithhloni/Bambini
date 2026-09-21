@@ -2,12 +2,14 @@ const STYLES: Record<string, string> = {
   draft: "bg-brand-border text-brand-ink",
   published: "bg-brand-sage/30 text-brand-ink",
   archived: "bg-brand-muted/20 text-brand-muted",
+  sold: "bg-brand-sage-dark/20 text-brand-sage-dark",
 };
 
 const LABELS: Record<string, string> = {
   draft: "Draft",
   published: "Published",
   archived: "Archived",
+  sold: "Sold",
 };
 
 export function StatusBadge({ status }: { status: string }) {

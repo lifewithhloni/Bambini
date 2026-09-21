@@ -5,7 +5,7 @@ export type MyListing = {
   id: string;
   title: string;
   price_cents: number;
-  status: "draft" | "published" | "archived";
+  status: "draft" | "published" | "archived" | "sold";
   condition: string;
   created_at: string;
   updated_at: string;

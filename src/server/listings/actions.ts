@@ -195,9 +195,22 @@ export async function updateListing(
   // the listing already existed, attaches pickup_location_id
   // retroactively rather than leaving it stuck at whatever was true when
   // the listing was first created.
-  const { data: existing } = await supabase.from("products").select("seller_type").eq("id", listingId).maybeSingle();
+  const { data: existing } = await supabase.from("products").select("seller_type, status").eq("id", listingId).maybeSingle();
+  if (!existing) {
+    return { error: "Listing not found." };
+  }
+  // 'sold' is set by create_order() the instant a buyer completes a
+  // purchase (see 20260925090000_orders_checkout.sql) — the order has
+  // already snapshotted the title/price/etc it needs, so nothing about
+  // editing the listing afterwards is unsafe in itself, but letting a
+  // seller change a sold listing's price/category after the fact serves
+  // no purpose and would be confusing (what would "editing" a completed
+  // sale even mean to the buyer who already has their own snapshot?).
+  if (existing.status === "sold") {
+    return { error: "This listing has been sold and can no longer be edited." };
+  }
   const pickupLocationId =
-    existing?.seller_type === "parent"
+    existing.seller_type === "parent"
       ? await resolveOwnPickupLocationId(supabase, user.id, parsed.data.collectionAvailable)
       : null;
 

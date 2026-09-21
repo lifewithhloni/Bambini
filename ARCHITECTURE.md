@@ -569,6 +569,65 @@ PGlite's WASM Postgres) hasn't been verified against a real Supabase
 project in this environment — see Technical risks below and
 DECISIONS.md.
 
+## Transaction / order architecture (Phase 4A)
+
+**The browser is never trusted for anything money-related.** Price,
+commission rate, commission amount, buyer identity, seller identity, and
+order totals are all derived server-side, inside a single database
+function — never accepted as parameters, never read from a form field.
+`src/server/orders/actions.ts`'s `createOrder()` Server Action sends
+exactly two things to the database: a product id (from the route, not a
+form field) and the buyer's chosen fulfilment method. Everything else —
+loading the product, checking eligibility, computing commission,
+building every row — happens inside `create_order()`
+(`supabase/migrations/20260925090000_orders_checkout.sql`).
+
+**One PL/pgSQL function, one transaction.** Placing an order touches six
+things that must succeed or fail together: flip the product from
+`published` to `sold`, insert `orders`/`order_items`/`payments`/
+`commissions`, insert an `order.created` `transaction_events` row. The
+Supabase JS client has no way to wrap several separate `.from()` calls
+in one transaction; `create_order()` is `SECURITY DEFINER` for a
+concrete, necessary reason (see the migration's own comment and
+DATABASE.md) — exactly the same justification pattern as
+`search_nearby_products()` (Phase 3B): the writes it performs have no
+RLS grant for a normal `authenticated` caller, by design, and
+`SECURITY DEFINER` only removes that obstacle to writes the function
+itself has already validated, never bypasses the validation.
+
+**Overselling and duplicate-order protection are the same mechanism.**
+A single atomic `UPDATE products SET status = 'sold' WHERE id = ... AND
+status = 'published'` is both. Postgres's row lock means a second
+concurrent or retried request for the same listing always re-evaluates
+that `WHERE` clause against the first request's already-committed
+`'sold'` status and matches zero rows — verified with a real
+`Promise.allSettled` concurrent-request test against a real engine
+(`tests/db/orders.test.ts`), not assumed from the theory of row
+locking. This reuses the foundation phase's own unused `sold`
+`product_status` enum label rather than adding a new column — see
+DECISIONS.md.
+
+**Order access is RLS, not application logic.** The buyer/seller SELECT
+policies (`orders_select_participant_or_admin` etc.) existed, unused,
+since the foundation phase and needed no changes — `getOrder()`/
+`getMyOrders()`/`getSellerOrders()` (`src/server/orders/`) are thin
+reads that rely on RLS to scope results, the same not-found-vs-not-yours
+pattern `getPublicListing()`/`getListingForEdit()` already use. One
+display-layer (not security) nuance: the seller-framed order detail
+page (`/sell/orders/[id]`) explicitly re-checks seller ownership before
+rendering commission info, since RLS alone would also let a *buyer*
+read that same row (they're a legitimate participant) — commission is a
+UI choice about who should see it, not a data-access boundary.
+
+**No payment provider, no fake success.** Every order is created at
+`orders.status = 'pending_payment'` / `payments.status = 'pending'`,
+using the existing `payment_providers` registry's seeded `mock` row as
+the `payments.provider_id` (satisfying the existing
+`payments_provider_required_when_online` constraint) — never a real
+charge, never an order that claims to be paid. Real payment provider
+integration is a later phase; this establishes the shape it will slot
+into without redesigning orders.
+
 ## Technical risks
 
 - **RLS policies are a first pass.** They're structured and consistent,

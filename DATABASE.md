@@ -258,6 +258,52 @@ given payout, so "why is this payout this amount" is always answerable.
 `refunds` references both the order and the specific payment being
 refunded.
 
+### Checkout and order creation (Phase 4A)
+
+Every table above existed unused since the foundation phase — this
+phase's actual work was the creation path, not new tables. One addition:
+`orders.order_reference` (`20260925090000_orders_checkout.sql`), a
+public-safe `BMB-XXXXXX` reference filled by a column `DEFAULT`
+(`'BMB-' || upper(substr(encode(gen_random_bytes(4), 'hex'), 1, 6))`),
+not application code — every future `INSERT` gets one automatically,
+including the raw fixture `INSERT` in `tests/db/rls.test.ts`, which
+predates this column and never mentions it.
+
+**`create_order(p_product_id, p_fulfilment_type)`** is the single,
+`SECURITY DEFINER` entry point for placing an order — one
+`plpgsql` function body is one transaction, which is what makes the six
+things a purchase touches (flip the product to `sold`, insert the
+order/order_item/payment/commission, insert an `order.created`
+`transaction_events` row) all succeed or all fail together. It's
+`SECURITY DEFINER` for a concrete reason: none of
+`orders`/`order_items`/`payments`/`commissions`/`transaction_events` has
+an `INSERT` policy for `authenticated` at all (server-side-only writes,
+by design since the foundation phase's own RLS migration), and a buyer
+has no ownership-based `UPDATE` grant on a product they don't own.
+Every value it writes — buyer (`auth.uid()`), seller (loaded from the
+product row), commission rate (the latest `commission_rates` row for
+that `seller_type`), price (the product's own `price_cents`) — is
+derived inside the function body, never accepted as a parameter.
+`EXECUTE` is revoked from `PUBLIC` and `anon`, granted only to
+`authenticated` (see the Phase 3B security review's identical finding
+for `search_nearby_products()` — `CREATE FUNCTION` grants `EXECUTE` to
+`PUBLIC` by default unless revoked).
+
+**Overselling and duplicate-submission protection are the same
+mechanism**: `update products set status = 'sold' where id = ... and
+status = 'published'`. The foundation phase's `product_status` enum
+already had an unused `sold` label (see
+`src/server/listings/statusTransitions.ts`'s own comment anticipating
+exactly this) — no new enum value was needed. Postgres locks the row
+for the UPDATE's duration; a second concurrent or retried request for
+the same listing re-evaluates the `WHERE` clause against the first
+request's now-committed `'sold'` status and matches zero rows, so
+`create_order()` raises a clean "not available" error rather than
+creating a second successful order. `tests/db/orders.test.ts` proves
+this with a real concurrent-request test (`Promise.allSettled` on two
+simultaneous calls), not just by reasoning about how `UPDATE ... WHERE`
+row locking works.
+
 ## Delivery
 
 `delivery_quotes` can exist before an order does (a buyer comparing
@@ -308,6 +354,11 @@ what goes in each and why they're separate.
 - `search_nearby_products(...)`, view `product_locations_public` — the
   only sanctioned public reads of location data; both `SECURITY
   DEFINER`. See ARCHITECTURE.md.
+- `create_order(p_product_id, p_fulfilment_type)` (Phase 4A) — the sole
+  entry point for placing an order; `SECURITY DEFINER` because no
+  INSERT policy exists on orders/payments/commissions/transaction_events
+  for `authenticated`. See ARCHITECTURE.md and the migration's own
+  comment.
 - `handle_new_user()` — creates a `profiles` row on `auth.users` insert.
 - `set_updated_at()` — generic `updated_at` maintenance trigger, applied
   to every table that has one.
@@ -345,6 +396,7 @@ what goes in each and why they're separate.
 | `20260922090000_search_products.sql` | `pg_trgm` extension + 3 new indexes; `search_products()` — the safe, parameterized, allowlisted-sort search/browse/filter/paginate entry point |
 | `20260923090000_nearby_search.sql` | `search_nearby_products()` extended (filters, pagination, distance/newest/price sort) via DROP + CREATE; `products_pickup_location_id_idx`; ownership `WITH CHECK` hardening on `products_insert_owner`/`products_update_owner_or_admin` for `pickup_location_id` |
 | `20260924090000_location_ownership_review_fixes.sql` | Security review follow-up: same ownership `WITH CHECK` extended to `profiles_insert_own`/`profiles_update_own_or_admin` for `location_id`; `search_nearby_products()`'s `EXECUTE` grant tightened to exclude the default `PUBLIC` grant |
+| `20260925090000_orders_checkout.sql` | `orders.order_reference` column (+ default generator); `create_order()` — the `SECURITY DEFINER`, atomic order-creation entry point |
 
 ## Local workflow
 
@@ -437,6 +489,19 @@ fresh engine and applying every migration takes ~15-20s per test file,
   `public` schema, `search_nearby_products()`'s `search_path` is
   pinned, and neither its `EXECUTE` grant nor
   `product_locations_public`'s `SELECT` grant includes `PUBLIC`).
+- `tests/db/orders.test.ts` (Phase 4A, 35 tests) — the full required
+  transaction-security scenario list: authentication, product
+  eligibility (nonexistent/draft/archived/own/already-sold), price/
+  commission/seller/buyer cannot be client-supplied (confirmed against
+  `create_order()`'s actual `pg_proc.proargnames`, not just by reading
+  the migration), buyer/seller RLS-scoped access, order/payment status
+  and financial fields can't be modified by a normal client,
+  `transaction_events` append-only (both the RLS-silent-0-rows case and
+  the trigger-level case reached via `service_role`), a real
+  `Promise.allSettled` concurrent-request race test, a real
+  duplicate-submission test, commission rounding, fulfilment-method
+  validation, and the function's own `SECURITY DEFINER`/`search_path`/
+  grant posture.
 
 **Limitations of this approach**, so results aren't over-trusted: PGlite
 is a real Postgres engine, but this is not the full Supabase platform —

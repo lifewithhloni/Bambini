@@ -17,6 +17,7 @@ export default async function SellDashboardPage() {
 
   const draft = listings.filter((l) => l.status === "draft");
   const published = listings.filter((l) => l.status === "published");
+  const sold = listings.filter((l) => l.status === "sold");
   const archived = listings.filter((l) => l.status === "archived");
 
   return (
@@ -30,6 +31,10 @@ export default async function SellDashboardPage() {
           + New listing
         </Link>
       </div>
+
+      <Link href="/sell/orders" className="text-sm font-medium text-brand-ink hover:underline">
+        View orders →
+      </Link>
 
       {listings.length === 0 ? (
         <div className="rounded-lg border border-dashed border-brand-border px-4 py-10 text-center">
@@ -48,6 +53,7 @@ export default async function SellDashboardPage() {
             <ListingSection title="Published" listings={published} imageUrls={imageUrls} />
           )}
           {draft.length > 0 && <ListingSection title="Drafts" listings={draft} imageUrls={imageUrls} />}
+          {sold.length > 0 && <ListingSection title="Sold" listings={sold} imageUrls={imageUrls} />}
           {archived.length > 0 && <ListingSection title="Archived" listings={archived} imageUrls={imageUrls} />}
         </>
       )}
