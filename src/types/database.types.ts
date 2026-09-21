@@ -44,6 +44,12 @@ type OrderStatus =
   | "disputed"
   | "refunded";
 type PaymentStatus = "pending" | "authorized" | "paid" | "failed" | "refunded" | "partially_refunded";
+// Phase 4C — see 20260927090000_cash_collection_transactions.sql for why
+// this exists: commissions previously had no way to say whether Bambini
+// had actually received its cut. 'settled' is reserved for a future
+// financial-settlement phase; nothing in this codebase currently writes
+// it to mean "collected."
+type CommissionSettlementStatus = "collected_via_payment" | "owed_by_seller" | "settled";
 
 export type Database = {
   public: {
@@ -461,6 +467,7 @@ export type Database = {
           rate_bps: number;
           base_amount_cents: number;
           commission_amount_cents: number;
+          settlement_status: CommissionSettlementStatus;
           created_at: string;
         };
         Insert: never;
@@ -473,6 +480,72 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+
+      // Written to only by create_order()/confirm_collection() (both
+      // SECURITY DEFINER); collection_code is additionally excluded from
+      // this project's own column-level SELECT grant for `authenticated`
+      // (see the migration) — reachable only via get_my_collection_code().
+      // It is still typed here (rather than omitted) so code that reads
+      // the other columns has an accurate Row shape; nothing in this
+      // codebase should ever read .collection_code directly off a normal
+      // client query.
+      collection_confirmations: {
+        Row: {
+          id: string;
+          order_id: string;
+          collection_code: string;
+          code_generated_at: string;
+          confirmed_by: string | null;
+          confirmed_at: string | null;
+          buyer_present: boolean;
+          notes: string | null;
+          failed_attempts: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "collection_confirmations_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Audit/visibility snapshot only — never the authoritative
+      // eligibility gate (that's evaluate_cash_eligibility(), evaluated
+      // fresh server-side every time it matters). See
+      // src/server/cash-eligibility/evaluateCashEligibility.ts.
+      seller_cash_status: {
+        Row: {
+          id: string;
+          seller_type: SellerType;
+          seller_profile_id: string | null;
+          business_id: string | null;
+          is_eligible: boolean;
+          failed_criteria: string[];
+          evaluated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+
+      // Singleton (id is always `true`) — the platform-wide cash
+      // kill-switch. Publicly readable (the checkout UI needs it to
+      // decide whether to even offer cash); writable only server-side.
+      cash_settings: {
+        Row: {
+          id: boolean;
+          is_enabled: boolean;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
       };
 
       transaction_events: {
@@ -620,11 +693,58 @@ export type Database = {
         Args: {
           p_product_id: string;
           p_fulfilment_type: FulfilmentType;
+          // Defaults to 'online' in the database — omit for any existing
+          // (pre-Phase-4C) caller. See
+          // 20260927090000_cash_collection_transactions.sql.
+          p_payment_method?: PaymentMethod;
         };
         Returns: {
           order_id: string;
           order_reference: string;
         }[];
+      };
+      // Public-safe wrapper around evaluate_cash_eligibility() — returns
+      // only a boolean, never the internal failed_criteria. The checkout
+      // UI's "should I offer Cash on collection" check.
+      is_seller_cash_eligible: {
+        Args: {
+          p_seller_type: SellerType;
+          p_seller_profile_id: string | null;
+          p_business_id: string | null;
+        };
+        Returns: boolean;
+      };
+      // SECURITY DEFINER — seller-only; re-validates ownership, state,
+      // global switch, and fresh eligibility from auth.uid(), never from
+      // a parameter. pending_payment -> confirmed.
+      accept_cash_order: {
+        Args: { p_order_id: string };
+        Returns: undefined;
+      };
+      // SECURITY DEFINER — seller-only. pending_payment -> cancelled,
+      // releases the listing back to 'published', voids the commission
+      // obligation (settlement_status -> 'settled', never
+      // 'collected_via_payment' — no cash was ever received).
+      decline_cash_order: {
+        Args: { p_order_id: string; p_reason?: string | null };
+        Returns: undefined;
+      };
+      // SECURITY DEFINER — seller-only. Validates the buyer-provided
+      // code against the stored one (never exposed to the seller
+      // directly — see get_my_collection_code()), with a 5-failed-
+      // attempt lockout. 'completed' | 'incorrect_code' | 'locked' |
+      // 'already_completed' — never a raised exception for a wrong code,
+      // only for auth/ownership/state failures.
+      confirm_collection: {
+        Args: { p_order_id: string; p_code: string };
+        Returns: { outcome: string }[];
+      };
+      // SECURITY DEFINER — the only sanctioned way to read a raw
+      // collection_code; buyer-only, re-validated from auth.uid() +
+      // orders.buyer_id every call.
+      get_my_collection_code: {
+        Args: { p_order_id: string };
+        Returns: string;
       };
       // SECURITY DEFINER — no UPDATE policy exists on payments for
       // `authenticated`. Re-validates auth.uid()=buyer_id, order/payment
@@ -663,6 +783,7 @@ export type Database = {
       payment_method: PaymentMethod;
       order_status: OrderStatus;
       payment_status: PaymentStatus;
+      commission_settlement_status: CommissionSettlementStatus;
     };
   };
 };

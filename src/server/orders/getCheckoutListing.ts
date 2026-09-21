@@ -12,6 +12,13 @@ export type CheckoutListing = {
   sellerProfileId: string | null;
   businessId: string | null;
   sellerName: string | null;
+  // Whether "Cash on collection" should even be offered — both the
+  // platform-wide switch and this specific seller's freshly-evaluated
+  // eligibility. Display only: create_order() independently re-checks
+  // both server-side regardless of what this says (see
+  // 20260927090000_cash_collection_transactions.sql) — a buyer can never
+  // force a cash order into existence just by submitting the field.
+  cashOffered: boolean;
 };
 
 /**
@@ -49,6 +56,19 @@ export async function getCheckoutListing(productId: string): Promise<CheckoutLis
     sellerName = data?.business_name ?? null;
   }
 
+  let cashOffered = false;
+  if (product.collection_available) {
+    const [{ data: cashSettings }, { data: eligible }] = await Promise.all([
+      supabase.from("cash_settings").select("is_enabled").eq("id", true).maybeSingle(),
+      supabase.rpc("is_seller_cash_eligible", {
+        p_seller_type: product.seller_type,
+        p_seller_profile_id: product.seller_profile_id,
+        p_business_id: product.business_id,
+      }),
+    ]);
+    cashOffered = !!cashSettings?.is_enabled && !!eligible;
+  }
+
   return {
     id: product.id,
     title: product.title,
@@ -61,5 +81,6 @@ export async function getCheckoutListing(productId: string): Promise<CheckoutLis
     sellerProfileId: product.seller_profile_id,
     businessId: product.business_id,
     sellerName,
+    cashOffered,
   };
 }

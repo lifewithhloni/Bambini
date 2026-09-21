@@ -83,6 +83,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ id: s
             collectionAvailable={listing.collectionAvailable}
             deliveryAvailable={listing.deliveryAvailable}
             deliveryDisabledReason={deliveryDisabledReason}
+            cashOffered={listing.cashOffered}
           />
         </>
       )}

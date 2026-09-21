@@ -20,7 +20,7 @@ describe("database schema", () => {
     expect(db).toBeDefined();
   });
 
-  it("creates every expected table (36 Bambini tables + PostGIS's own spatial_ref_sys)", async () => {
+  it("creates every expected table (37 Bambini tables + PostGIS's own spatial_ref_sys)", async () => {
     const r = await db.query<{ table_name: string }>(`
       select table_name from information_schema.tables
       where table_schema = 'public' and table_type = 'BASE TABLE'
@@ -31,8 +31,10 @@ describe("database schema", () => {
     expect(names).toContain("orders");
     expect(names).toContain("transaction_events");
     expect(names).toContain("seller_cash_status");
-    // 36 authored tables + PostGIS's spatial_ref_sys reference table.
-    expect(names.length).toBe(37);
+    expect(names).toContain("cash_settings");
+    // 37 authored tables (36 + Phase 4C's cash_settings) + PostGIS's
+    // spatial_ref_sys reference table.
+    expect(names.length).toBe(38);
   });
 
   it("creates the public-safe views", async () => {
@@ -130,7 +132,7 @@ describe("database schema", () => {
     `);
     const withoutRls = r.rows.filter((row) => !row.relrowsecurity).map((row) => row.relname);
     expect(withoutRls).toEqual(["spatial_ref_sys"]);
-    expect(r.rows.filter((row) => row.relrowsecurity).length).toBe(36);
+    expect(r.rows.filter((row) => row.relrowsecurity).length).toBe(37);
   });
 
   it("computes real PostGIS distances and only returns nearby active products", async () => {

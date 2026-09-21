@@ -596,6 +596,51 @@ another shot before the listing reopens? what happens to a payment
 that lands *after* expiry?) — tracked as an Open item below rather than
 guessed at here.
 
+**Phase 4C: `commissions.settlement_status` is a new column on the
+existing table, not a new ledger table.** The brief's own commission-
+obligation question offered several possible designs (a wallet/balance,
+a dedicated ledger, an invoice, etc.) and explicitly asked for the
+smallest one that just *records* the obligation without implementing
+any way to collect it. `commissions` already had exactly the right
+granularity (one row per order); adding one column
+(`collected_via_payment | owed_by_seller | settled`) is enough to answer
+"does Bambini still need to collect this," which is all this phase
+needs. A dedicated ledger/wallet table remains the natural next step
+once an actual settlement mechanism is chosen — deliberately not built
+here.
+
+**Phase 4C: eligibility is evaluated fresh every time, never read back
+from `seller_cash_status`.** The table exists (Phase 0) specifically as
+a cache, but a fresh check is cheap (a handful of small row reads) and
+avoids an entire class of "when do we invalidate the cache" bugs a
+maintained cache would introduce. `seller_cash_status` is still written
+to after every evaluation — useful for a future "why is this seller
+ineligible" admin view — but nothing ever reads it back as an
+authorization decision.
+
+**Phase 4C: `decline_cash_order()` releases the listing back to
+`published`, but this does *not* change the Phase 4B PayFast-failure
+behaviour (item 20 below), which still leaves the listing `sold`.**
+These look similar but aren't: a cash decline is a deliberate,
+unambiguous, authenticated seller action with certain knowledge that no
+money has moved; a PayFast failure is a webhook event about a buyer's
+payment attempt, with more ambiguity about what actually happened and
+no seller action to anchor "the seller has confirmed they don't want
+this sale" to. Solving the general abandoned-order problem remains the
+separate, still-open item 20.
+
+**Phase 4C: the collection-code column privacy fix — `collection_code`
+is excluded from `collection_confirmations`'s column-level SELECT grant
+for `authenticated`.** This was a genuine, if latent, security gap in
+the original Phase 0 design: the RLS policy on this table is
+row-level ("can you see this row"), which doesn't stop the seller
+specifically from reading `collection_code` directly and self-confirming
+a collection the buyer never made — defeating the entire point of a
+buyer-provided code. Fixed with the same column-level GRANT/REVOKE
+mechanism already established for `profiles`/`businesses` INSERT (see
+`20260920100000_restrict_insert_columns.sql`), applied to SELECT here;
+the only sanctioned read path is now `get_my_collection_code()`.
+
 ## Open — needs product/stakeholder input before the relevant phase
 
 1. ~~Which payment provider first?~~ **Resolved in Phase 4B: PayFast**
@@ -749,3 +794,34 @@ guessed at here.
     complete" — a real product/architecture decision (a timeout job? a
     seller-initiated cancel? something else?), not something to guess
     at inside this phase.
+21. **Phase 4C: how a seller actually settles an `owed_by_seller`
+    commission.** This phase only records the obligation
+    (`commissions.settlement_status`); it deliberately does not
+    implement collecting it. The brief listed several candidate
+    mechanisms (deduction from a seller's future online sales, a
+    wallet/balance the seller tops up, manual invoicing/EFT, an account
+    restriction until settled, a deposit/preauthorization at cash-order
+    creation) without picking one, and that choice still needs
+    product/stakeholder input — it has real UX and legal implications
+    (e.g. can Bambini restrict a seller's account over an unpaid
+    obligation before that's disclosed in seller terms?).
+22. **Phase 4C: no global cash kill-switch admin UI.** `cash_settings`
+    exists and is fully enforced server-side, but toggling it today
+    requires a direct database update — there's no `/admin` page for it
+    yet. Same for per-seller eligibility overrides (an admin cannot yet
+    manually mark a seller eligible/ineligible outside the automatic
+    criteria evaluation).
+23. **Phase 4C: collection-code regeneration and expiry were explicitly
+    scoped out.** A buyer who loses/forgets their code, or suspects it's
+    been shared, has no self-service way to invalidate and get a new
+    one — `code_generated_at` exists and is enough data to build an
+    expiry policy on later, but nothing enforces one today. Both were
+    explicitly deferred by the phase brief as future enhancements, not
+    oversights.
+24. **Phase 4C: admin dispute investigation of a specific collection
+    code has no dedicated path.** The `authenticated` column-level
+    REVOKE (see "Decided" above) applies to admins acting through a
+    normal session too — an admin can see everything else about a
+    collection_confirmations row but not the raw code, unless they go
+    through a service-role/direct-DB session. No admin dispute-resolution
+    tooling exists yet regardless (also true before this phase).

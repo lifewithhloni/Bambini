@@ -5,6 +5,12 @@ export type OrderDetail = {
   order_reference: string;
   status: string;
   payment_status: string;
+  payment_method: string;
+  // Only meaningful for the seller-framed view (see OrderDetailView.tsx)
+  // — Phase 4C's commission settlement_status, never rendered for a
+  // buyer (the brief is explicit: internal commission details are not
+  // the buyer's business).
+  commission_settlement_status: string | null;
   fulfilment_type: string;
   subtotal_cents: number;
   total_cents: number;
@@ -52,13 +58,14 @@ export async function getOrder(orderId: string): Promise<OrderDetail | null> {
 
   if (error || !order) return null;
 
-  const [{ data: orderItem }, { data: payment }, { data: buyerProfile }] = await Promise.all([
+  const [{ data: orderItem }, { data: payment }, { data: commission }, { data: buyerProfile }] = await Promise.all([
     supabase
       .from("order_items")
       .select("product_id, title_snapshot, price_cents_snapshot")
       .eq("order_id", orderId)
       .maybeSingle(),
-    supabase.from("payments").select("status").eq("order_id", orderId).maybeSingle(),
+    supabase.from("payments").select("status, method").eq("order_id", orderId).maybeSingle(),
+    supabase.from("commissions").select("settlement_status").eq("order_id", orderId).maybeSingle(),
     supabase.from("profiles_public").select("full_name").eq("id", order.buyer_id).maybeSingle(),
   ]);
 
@@ -92,6 +99,8 @@ export async function getOrder(orderId: string): Promise<OrderDetail | null> {
     order_reference: order.order_reference,
     status: order.status,
     payment_status: payment?.status ?? "pending",
+    payment_method: payment?.method ?? "online",
+    commission_settlement_status: commission?.settlement_status ?? null,
     fulfilment_type: order.fulfilment_type,
     subtotal_cents: order.subtotal_cents,
     total_cents: order.total_cents,

@@ -82,7 +82,8 @@ describe("getOrder", () => {
       data: { product_id: "product-1", title_snapshot: "Stroller", price_cents_snapshot: 50000 },
       error: null,
     });
-    mockSupabase.queue("payments", { data: { status: "pending" }, error: null });
+    mockSupabase.queue("payments", { data: { status: "pending", method: "online" }, error: null });
+    mockSupabase.queue("commissions", { data: { settlement_status: "collected_via_payment" }, error: null });
     mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null }); // buyer lookup
     mockSupabase.queue("product_images", { data: [{ storage_path: "product-1/a.jpg", sort_order: 0 }], error: null });
     mockSupabase.queue("product_locations_public", { data: { suburb: "Gardens", city: "Cape Town" }, error: null });
@@ -95,6 +96,8 @@ describe("getOrder", () => {
       order_reference: "BMB-AAA111",
       status: "pending_payment",
       payment_status: "pending",
+      payment_method: "online",
+      commission_settlement_status: "collected_via_payment",
       fulfilment_type: "collection",
       subtotal_cents: 50000,
       total_cents: 50000,
@@ -124,7 +127,8 @@ describe("getOrder", () => {
       error: null,
     });
     mockSupabase.queue("order_items", { data: null, error: null });
-    mockSupabase.queue("payments", { data: { status: "paid" }, error: null });
+    mockSupabase.queue("payments", { data: { status: "paid", method: "online" }, error: null });
+    mockSupabase.queue("commissions", { data: { settlement_status: "collected_via_payment" }, error: null });
     mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null });
     mockSupabase.queue("businesses_public", { data: { business_name: "Alice's Shop" }, error: null });
 
@@ -138,10 +142,13 @@ describe("getOrder", () => {
     mockSupabase.queue("orders", { data: baseOrder, error: null });
     mockSupabase.queue("order_items", { data: null, error: null });
     mockSupabase.queue("payments", { data: null, error: null });
+    mockSupabase.queue("commissions", { data: null, error: null });
     mockSupabase.queue("profiles_public", { data: null, error: null });
     mockSupabase.queue("profiles_public", { data: null, error: null });
 
     const result = await getOrder("order-1");
     expect(result?.payment_status).toBe("pending");
+    expect(result?.payment_method).toBe("online");
+    expect(result?.commission_settlement_status).toBeNull();
   });
 });

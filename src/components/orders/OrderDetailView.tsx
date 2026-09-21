@@ -59,6 +59,10 @@ export function OrderDetailView({
           <span className="text-brand-muted">Fulfilment</span>
           <span className="text-brand-ink capitalize">{order.fulfilment_type}</span>
         </div>
+        <div className="flex items-center justify-between">
+          <span className="text-brand-muted">Payment method</span>
+          <span className="text-brand-ink">{order.payment_method === "cash" ? "Cash on collection" : "Online (PayFast)"}</span>
+        </div>
         {order.fulfilment_type === "collection" && order.pickupLocation?.suburb && (
           <div className="flex items-center justify-between">
             <span className="text-brand-muted">Collect from</span>
@@ -92,6 +96,11 @@ export function OrderDetailView({
             <span className="text-brand-ink">You receive</span>
             <span className="text-brand-ink">{formatCentsAsRand(order.total_cents - order.commission_amount_cents)}</span>
           </div>
+          {order.commission_settlement_status === "owed_by_seller" && (
+            <p className="mt-1 text-xs text-brand-muted">
+              You collect the full amount in cash — this commission is still owed to Bambini and isn&apos;t deducted automatically.
+            </p>
+          )}
         </div>
       )}
     </div>

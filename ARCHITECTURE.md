@@ -302,44 +302,108 @@ platform-staff actions (approving a verification, resolving a dispute,
 suspending an account) — kept distinct from `transaction_events` because
 it's about staff behavior, not order/financial lifecycle.
 
-## Cash collection architecture
+## Cash collection architecture (Phase 4C)
 
-Cash is supported **only** for collection, and new sellers do **not**
-get it automatically. The flow, matching the product brief exactly:
+Cash is supported **only** for collection — `payment_method = 'cash'`
+combined with `fulfilment_type = 'delivery'` is rejected at three
+independent layers: the checkout UI never renders the option,
+`create_order()` raises an exception, and an `orders_cash_requires_collection`
+CHECK constraint rejects it even from a direct write. New sellers do
+**not** get cash automatically — see eligibility below.
 
-1. Buyer selects "Cash at Collection" at checkout — only offered if the
-   seller currently passes eligibility (see below).
-2. An `orders` row is created with `payment_method = 'cash'`,
-   `fulfilment_type = 'collection'`.
-3. A `payments` row is created with `method = 'cash'`, `status =
-   'pending'` — a cash order gets a payment record just like an online
-   one; "every transaction has a record" applies here too.
-4. A `collection_confirmations` row is created with a generated
-   `collection_code`.
-5. Buyer pays the seller cash in person; the seller enters the code in
-   the app.
-6. Confirming the code — server-side, not trusted from either party's
-   unverified say-so — sets `collection_confirmations.confirmed_at`,
-   flips `payments.status` to `paid`, `orders.status` to `completed`, and
-   the existing commission snapshot on the order (12% parent / 15%
-   business, computed at order creation by `calculateCommission()`)
-   remains payable exactly as for an online payment.
-7. Every step above also writes a `transaction_events` row.
+Implemented in
+`supabase/migrations/20260927090000_cash_collection_transactions.sql`.
+The actual flow:
 
-**Eligibility** is evaluated by
-`src/server/cash-eligibility/evaluateCashEligibility.ts`, a pure,
-unit-tested function that takes a trusted `SellerStanding` snapshot
-(gathered server-side — never from the client) and a list of
-admin-configurable criteria from the `cash_eligibility_criteria` table
-(minimum completed transactions, minimum rating, requires account
+1. Buyer selects "Cash on collection" at checkout — only rendered when
+   `is_seller_cash_eligible()` and `cash_settings.is_enabled` both say
+   yes, at the time the page is served. Display only.
+2. `create_order(product_id, 'collection', 'cash')` — the same function
+   Phase 4A/4B already used, now also given a payment method — atomically:
+   checks the global switch, evaluates eligibility **fresh** (never from
+   a cache — see below), creates the `orders` row (`status =
+   'pending_payment'`), a `payments` row (`method = 'cash'`, `provider_id
+   = null`, `status = 'pending'`), a `commissions` row
+   (`settlement_status = 'owed_by_seller'` — Bambini has received
+   nothing; this is money the seller now owes, the opposite direction
+   from `payouts`), and a `collection_confirmations` row with a fresh
+   6-digit numeric code (`gen_random_bytes`-derived, never from an
+   id/timestamp/sequence).
+3. **Seller acceptance is mandatory** — `accept_cash_order()` (seller
+   only, re-validates ownership/eligibility/the global switch) moves
+   `pending_payment → confirmed`; `payments.status` stays `pending`,
+   since no money has moved yet. `decline_cash_order()` moves the order
+   to `cancelled`, releases the product back to `published` (safe here
+   specifically — a deliberate seller action, no money moved — unlike a
+   PayFast failure, see "Open decisions"), and voids the commission
+   (`settlement_status → 'settled'`, never `'collected_via_payment'` —
+   nothing was ever collected).
+4. Buyer pays the seller cash in person and shows their code (retrieved
+   only via `get_my_collection_code()` — see below); the seller types it
+   into `confirm_collection(order_id, code)`.
+5. `confirm_collection()` is shared by cash **and** online collection
+   orders (this also closes a Phase 4B gap — there was previously no
+   path from `confirmed` to `completed` for an online-paid collection
+   order at all). It validates the code with a 5-failed-attempt lockout,
+   then: for cash, flips `payments.status → paid` (this is the moment
+   money actually changed hands) and `orders.status → completed`; for
+   online, `payments.status` is already `paid` (via
+   `process_payfast_itn()`), so only `orders.status → completed`
+   changes. `commissions.settlement_status` is untouched either way —
+   collection confirms the *transaction*, not the *commission
+   settlement*, which stays `owed_by_seller` until a future settlement
+   phase.
+6. Every step above writes a `transaction_events` row
+   (`cash.order_created`, `cash_order.accepted`, `cash_order.declined`,
+   `collection.confirmed`, `collection.attempt_failed`).
+
+**Collection code privacy**: `collection_confirmations.collection_code`
+is excluded from the column-level SELECT grant given to `authenticated`
+— *no* signed-in user, buyer or seller, can read it with a plain query
+(this was a real gap in the original Phase 0 RLS: row-level policies
+don't stop a seller from reading their own order's code and
+self-confirming without the buyer ever being involved). The only way to
+read it is `get_my_collection_code(order_id)`, which re-validates
+`auth.uid() = orders.buyer_id` itself.
+
+**Eligibility** is evaluated by `evaluate_cash_eligibility()`, a SQL
+mirror of `src/server/cash-eligibility/evaluateCashEligibility.ts`'s
+logic (the same "SQL mirror of a pure TS function" pattern
+`create_order()` already used for `calculateCommission()` — necessary
+because the check has to run inside a single atomic transaction).
+Criteria come from the same admin-configurable `cash_eligibility_criteria`
+table (minimum completed transactions, minimum rating, requires account
 verification, requires identity verification, maximum unresolved
-disputes; bad account standing short-circuits to ineligible regardless of
-the rest). The result is cached per seller in `seller_cash_status`
-(`is_eligible` defaults to `false`), recomputed when something that
-could change it happens (a verification completes, an order completes, a
-dispute resolves). Checkout only shows "Cash at Collection" when
-`seller_cash_status.is_eligible = true` for that seller, checked
-server-side at the time of purchase, not just at page-render time.
+disputes; bad account standing short-circuits to ineligible regardless
+of the rest). It is evaluated **fresh** every time it's needed —
+`seller_cash_status` is written to as an audit/visibility snapshot after
+each evaluation, but is never itself read back as the gate. A seller
+eligible at order-creation time stays eligible for that order even if
+their standing changes later (the check simply never re-runs for an
+already-created order) — but `accept_cash_order()` re-checks it, since a
+seller who slipped after the buyer ordered but before the seller
+accepted should not be able to accept.
+
+**Global kill-switch**: `cash_settings` (a singleton table — `id` is
+always `true`) lets cash be disabled platform-wide without touching
+per-seller eligibility. Checked inside `create_order()` and
+`accept_cash_order()`; publicly readable so the checkout UI can hide the
+option without a round-trip. No admin UI ships this phase — toggling it
+today is a direct database update.
+
+**Commission settlement** (`commissions.settlement_status`:
+`collected_via_payment | owed_by_seller | settled`) records *whether
+Bambini has actually received its cut*, which the schema had no way to
+express before this phase. For an online order the commission is
+implicitly already in Bambini's possession (PayFast pays Bambini the
+full amount) — `collected_via_payment`. For a cash order the seller
+keeps 100% of the cash directly — `owed_by_seller`. **Phase 4C only
+records this obligation — it does not implement any way to actually
+collect it** (no wallet, no deduction from future sales, no automatic
+suspension). That's explicitly a future financial-settlement phase's
+job; `owed_by_seller → settled` is not written anywhere in this
+migration except the one case where the obligation was voided, not
+collected (a declined order — see above).
 
 ## Listing / catalogue architecture (Phase 2A)
 

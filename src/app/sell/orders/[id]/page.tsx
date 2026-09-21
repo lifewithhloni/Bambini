@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrder, type OrderDetail } from "@/server/orders/getOrder";
 import { getSignedImageUrls } from "@/server/listings/imageUrls";
 import { OrderDetailView } from "@/components/orders/OrderDetailView";
+import { CashOrderActions } from "@/components/orders/CashOrderActions";
+import { ConfirmCollectionForm } from "@/components/orders/ConfirmCollectionForm";
 
 // One specific signed-in seller's own order — never statically cached.
 export const dynamic = "force-dynamic";
@@ -48,6 +50,10 @@ export default async function SellerOrderDetailPage({ params }: { params: Promis
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-12">
       <h1 className="text-xl font-semibold text-brand-ink">Order details</h1>
       <OrderDetailView order={order} viewerRole="seller" imageUrl={imageUrl} />
+
+      {order.payment_method === "cash" && order.status === "pending_payment" && <CashOrderActions orderId={order.id} />}
+
+      {order.fulfilment_type === "collection" && order.status === "confirmed" && <ConfirmCollectionForm orderId={order.id} />}
     </div>
   );
 }

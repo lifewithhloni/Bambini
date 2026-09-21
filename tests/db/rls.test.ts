@@ -248,9 +248,58 @@ describe("RLS policies", () => {
       expect(check.rows[0].confirmed_at).toBeNull();
     });
 
-    it("an unrelated user cannot even read the collection code", async () => {
-      const r = await asUser(db, carol, () => db.query(`select * from public.collection_confirmations where order_id = $1`, [orderId]));
+    it("an unrelated user cannot read collection_confirmations metadata for someone else's order", async () => {
+      const r = await asUser(db, carol, () =>
+        db.query(`select id, order_id, confirmed_at from public.collection_confirmations where order_id = $1`, [orderId]),
+      );
       expect(r.rows.length).toBe(0);
+    });
+
+    // Phase 4C: no authenticated user — buyer, seller, or an unrelated
+    // party — can SELECT the raw collection_code column at all anymore
+    // (see 20260927090000_cash_collection_transactions.sql). This is a
+    // column-level GRANT restriction, checked before RLS's row-level
+    // filtering even runs, so it fails with "permission denied for
+    // table," not an empty result — a stronger guarantee than "you can't
+    // see this row," namely "this column cannot be read by this role at
+    // all." The only sanctioned way to read it is get_my_collection_code().
+    it("the seller cannot SELECT collection_code directly, even for their own order", async () => {
+      await asUser(db, bob, async () => {
+        await expect(
+          db.query(`select collection_code from public.collection_confirmations where order_id = $1`, [orderId]),
+        ).rejects.toThrow(/permission denied/i);
+      });
+    });
+
+    it("the buyer cannot SELECT collection_code directly either — only through get_my_collection_code()", async () => {
+      await asUser(db, alice, async () => {
+        await expect(
+          db.query(`select collection_code from public.collection_confirmations where order_id = $1`, [orderId]),
+        ).rejects.toThrow(/permission denied/i);
+      });
+    });
+
+    it("buyer can retrieve their own collection code through get_my_collection_code()", async () => {
+      const r = await asUser(db, alice, () => db.query<{ get_my_collection_code: string }>(`select public.get_my_collection_code($1)`, [orderId]));
+      expect(r.rows[0].get_my_collection_code).toBe("ABC123");
+    });
+
+    it("seller cannot retrieve the buyer's collection code through get_my_collection_code()", async () => {
+      await asUser(db, bob, async () => {
+        await expect(db.query(`select public.get_my_collection_code($1)`, [orderId])).rejects.toThrow(/not found/i);
+      });
+    });
+
+    it("an unrelated user cannot retrieve the code through get_my_collection_code()", async () => {
+      await asUser(db, carol, async () => {
+        await expect(db.query(`select public.get_my_collection_code($1)`, [orderId])).rejects.toThrow(/not found/i);
+      });
+    });
+
+    it("anonymous cannot call get_my_collection_code()", async () => {
+      await asAnon(db, async () => {
+        await expect(db.query(`select public.get_my_collection_code($1)`, [orderId])).rejects.toThrow();
+      });
     });
   });
 

@@ -13,12 +13,15 @@ const redirectMock = vi.fn((target: string) => {
 });
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 
+const revalidatePathMock = vi.fn();
+vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
+
 const rpcMock = vi.fn();
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => ({ rpc: rpcMock })),
 }));
 
-const { createOrder } = await import("./actions");
+const { createOrder, acceptCashOrder, declineCashOrder, confirmCollection } = await import("./actions");
 
 function formData(fields: Record<string, string | undefined>) {
   const fd = new FormData();
@@ -32,6 +35,7 @@ beforeEach(() => {
   requireUserMock.mockReset();
   requireUserMock.mockResolvedValue({ id: "buyer-1", email: "buyer@example.com" });
   redirectMock.mockClear();
+  revalidatePathMock.mockClear();
   rpcMock.mockReset();
 });
 
@@ -48,7 +52,7 @@ describe("createOrder", () => {
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
-  it("calls create_order with only the product id and fulfilment type — no price, seller, buyer, or commission field", async () => {
+  it("calls create_order with only the product id, fulfilment type, and payment method — no price, seller, buyer, or commission field", async () => {
     rpcMock.mockResolvedValue({ data: [{ order_id: "order-1", order_reference: "BMB-ABC123" }], error: null });
 
     await expect(createOrder("product-1", null, formData({ fulfilmentType: "collection" }))).rejects.toThrow(RedirectSignal);
@@ -56,17 +60,54 @@ describe("createOrder", () => {
     expect(rpcMock).toHaveBeenCalledWith("create_order", {
       p_product_id: "product-1",
       p_fulfilment_type: "collection",
+      p_payment_method: "online",
     });
     const args = rpcMock.mock.calls[0][1];
-    expect(Object.keys(args).sort()).toEqual(["p_fulfilment_type", "p_product_id"]);
+    expect(Object.keys(args).sort()).toEqual(["p_fulfilment_type", "p_payment_method", "p_product_id"]);
   });
 
-  it("redirects to the new order's payment step on success (Phase 4B: an order isn't done until it's paid — see actions.ts)", async () => {
+  it("defaults to 'online' when no paymentMethod field is present at all (e.g. delivery checkout, which never renders the cash option)", async () => {
+    rpcMock.mockResolvedValue({ data: [{ order_id: "order-1", order_reference: "BMB-ABC123" }], error: null });
+    await expect(createOrder("product-1", null, formData({ fulfilmentType: "delivery" }))).rejects.toThrow(RedirectSignal);
+    expect(rpcMock).toHaveBeenCalledWith("create_order", {
+      p_product_id: "product-1",
+      p_fulfilment_type: "delivery",
+      p_payment_method: "online",
+    });
+  });
+
+  it("rejects an unrecognized payment method value (never passed through to the RPC as arbitrary text)", async () => {
+    const result = await createOrder("product-1", null, formData({ fulfilmentType: "collection", paymentMethod: "bitcoin" }));
+    expect(result).toEqual({ error: expect.any(String) });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("passes 'cash' through when the buyer selects it", async () => {
+    rpcMock.mockResolvedValue({ data: [{ order_id: "order-9", order_reference: "BMB-CASH01" }], error: null });
+    await expect(createOrder("product-1", null, formData({ fulfilmentType: "collection", paymentMethod: "cash" }))).rejects.toThrow(RedirectSignal);
+    expect(rpcMock).toHaveBeenCalledWith("create_order", {
+      p_product_id: "product-1",
+      p_fulfilment_type: "collection",
+      p_payment_method: "cash",
+    });
+  });
+
+  it("redirects to the new order's payment step on success for online orders (Phase 4B: an order isn't done until it's paid — see actions.ts)", async () => {
     rpcMock.mockResolvedValue({ data: [{ order_id: "order-42", order_reference: "BMB-XYZ789" }], error: null });
 
     await expect(createOrder("product-1", null, formData({ fulfilmentType: "delivery" }))).rejects.toThrow(RedirectSignal);
 
     expect(redirectMock).toHaveBeenCalledWith("/orders/order-42/pay");
+  });
+
+  it("redirects straight to the order details page for cash orders — there's no PayFast checkout to send the buyer to", async () => {
+    rpcMock.mockResolvedValue({ data: [{ order_id: "order-43", order_reference: "BMB-CASH02" }], error: null });
+
+    await expect(
+      createOrder("product-1", null, formData({ fulfilmentType: "collection", paymentMethod: "cash" })),
+    ).rejects.toThrow(RedirectSignal);
+
+    expect(redirectMock).toHaveBeenCalledWith("/account/orders/order-43");
   });
 
   it("requires authentication before doing anything else", async () => {
@@ -100,5 +141,76 @@ describe("createOrder", () => {
     rpcMock.mockResolvedValue({ data: [], error: null });
     const result = await createOrder("product-1", null, formData({ fulfilmentType: "collection" }));
     expect(result).toEqual({ error: expect.any(String) });
+  });
+});
+
+describe("acceptCashOrder", () => {
+  it("calls accept_cash_order with only the order id", async () => {
+    rpcMock.mockResolvedValue({ error: null });
+    const result = await acceptCashOrder("order-1", null);
+    expect(rpcMock).toHaveBeenCalledWith("accept_cash_order", { p_order_id: "order-1" });
+    expect(result).toBeNull();
+  });
+
+  it("requires authentication", async () => {
+    requireUserMock.mockImplementation(() => {
+      throw new RedirectSignal("/login");
+    });
+    await expect(acceptCashOrder("order-1", null)).rejects.toThrow(RedirectSignal);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a friendly error, never the raw Postgres message", async () => {
+    rpcMock.mockResolvedValue({ error: { message: "You are no longer eligible to accept cash orders" } });
+    const result = await acceptCashOrder("order-1", null);
+    expect(result).toEqual({ error: expect.any(String) });
+    expect((result as { error: string }).error).not.toMatch(/You are no longer eligible/);
+  });
+});
+
+describe("declineCashOrder", () => {
+  it("calls decline_cash_order with only the order id", async () => {
+    rpcMock.mockResolvedValue({ error: null });
+    const result = await declineCashOrder("order-1", null);
+    expect(rpcMock).toHaveBeenCalledWith("decline_cash_order", { p_order_id: "order-1" });
+    expect(result).toBeNull();
+  });
+});
+
+describe("confirmCollection", () => {
+  it("rejects a malformed code before ever calling the database", async () => {
+    const result = await confirmCollection("order-1", null, formData({ code: "abc" }));
+    expect(result).toEqual({ error: expect.any(String) });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("sends only the order id and the entered code — never the true stored code (it never has it)", async () => {
+    rpcMock.mockResolvedValue({ data: [{ outcome: "completed" }], error: null });
+    await confirmCollection("order-1", null, formData({ code: "123456" }));
+    expect(rpcMock).toHaveBeenCalledWith("confirm_collection", { p_order_id: "order-1", p_code: "123456" });
+  });
+
+  it("reports success for a 'completed' outcome", async () => {
+    rpcMock.mockResolvedValue({ data: [{ outcome: "completed" }], error: null });
+    const result = await confirmCollection("order-1", null, formData({ code: "123456" }));
+    expect(result).toEqual({ success: true, outcome: "completed" });
+  });
+
+  it("reports success for an idempotent 'already_completed' outcome", async () => {
+    rpcMock.mockResolvedValue({ data: [{ outcome: "already_completed" }], error: null });
+    const result = await confirmCollection("order-1", null, formData({ code: "123456" }));
+    expect(result).toEqual({ success: true, outcome: "already_completed" });
+  });
+
+  it("reports a clear (but non-throwing) error for an incorrect code", async () => {
+    rpcMock.mockResolvedValue({ data: [{ outcome: "incorrect_code" }], error: null });
+    const result = await confirmCollection("order-1", null, formData({ code: "000000" }));
+    expect(result).toEqual({ error: expect.any(String), outcome: "incorrect_code" });
+  });
+
+  it("reports lockout distinctly from a plain incorrect code", async () => {
+    rpcMock.mockResolvedValue({ data: [{ outcome: "locked" }], error: null });
+    const result = await confirmCollection("order-1", null, formData({ code: "000000" }));
+    expect(result).toEqual({ error: expect.stringMatching(/locked/i), outcome: "locked" });
   });
 });

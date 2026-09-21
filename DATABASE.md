@@ -380,14 +380,22 @@ attached once the buyer picks a quote and the order is created.
 tracking `provider_tracking_ref` and a `delivery_order_status` that
 mirrors what the provider reports (never inferred client-side).
 
-## Cash collection
+## Cash collection (Phase 4C)
 
-`collection_confirmations` (1:1 with an order using collection fulfilment)
-holds the generated `collection_code` and who/when it was confirmed.
-`seller_cash_status` is the current, server-computed cache of whether a
-seller may offer cash — see
-[ARCHITECTURE.md](ARCHITECTURE.md#cash-collection-architecture) for the
-full flow and why new sellers default to `is_eligible = false`.
+`collection_confirmations` (1:1 with an order using collection
+fulfilment, cash *or* online-paid) holds the generated `collection_code`,
+`failed_attempts` (0–5, brute-force lockout), and who/when it was
+confirmed. `collection_code` is **not** in `authenticated`'s column-level
+SELECT grant — see below — reachable only via `get_my_collection_code()`.
+`seller_cash_status` is a write-only audit snapshot of the last
+eligibility evaluation for a seller, never read back as an authorization
+decision (`evaluate_cash_eligibility()` is always re-run fresh). `cash_settings`
+is a one-row singleton table (`id` always `true`) — the platform-wide
+cash kill-switch, publicly readable, server-write-only.
+`commissions.settlement_status` (`collected_via_payment | owed_by_seller
+| settled`) records whether Bambini has actually received its commission
+— see [ARCHITECTURE.md](ARCHITECTURE.md#cash-collection-architecture-phase-4c)
+for the full flow and the commission-settlement rationale.
 
 ## Messaging, reviews, subscriptions, promotions
 
@@ -421,10 +429,15 @@ what goes in each and why they're separate.
 - `search_nearby_products(...)`, view `product_locations_public` — the
   only sanctioned public reads of location data; both `SECURITY
   DEFINER`. See ARCHITECTURE.md.
-- `create_order(p_product_id, p_fulfilment_type)` (Phase 4A) — the sole
-  entry point for placing an order; `SECURITY DEFINER` because no
-  INSERT policy exists on orders/payments/commissions/transaction_events
-  for `authenticated`. See ARCHITECTURE.md and the migration's own
+- `create_order(p_product_id, p_fulfilment_type, p_payment_method
+  default 'online')` (Phase 4A, extended Phase 4C) — the sole entry
+  point for placing an order, cash or online; `SECURITY DEFINER` because
+  no INSERT policy exists on
+  orders/payments/commissions/collection_confirmations/transaction_events
+  for `authenticated`. The `p_payment_method` parameter is new in Phase
+  4C (DROP + CREATE, not `CREATE OR REPLACE`, since a new parameter is a
+  distinct signature to Postgres) — every pre-4C 2-argument caller is
+  unaffected by the default. See ARCHITECTURE.md and the migration's own
   comment.
 - `record_payment_attempt(p_order_id, p_provider_reference)` (Phase 4B)
   — `SECURITY DEFINER`, same reasoning as `create_order()`; the
@@ -433,6 +446,30 @@ what goes in each and why they're separate.
   p_amount_cents)` (Phase 4B) — NOT `SECURITY DEFINER` (its only caller,
   `service_role`, already bypasses RLS); `EXECUTE`: `service_role` only.
   See ARCHITECTURE.md.
+- `evaluate_cash_eligibility(p_seller_type, p_seller_profile_id,
+  p_business_id)` (Phase 4C) — internal, `stable`, `SECURITY DEFINER`; a
+  SQL mirror of `evaluateCashEligibility.ts`, used only by
+  `create_order()`/`accept_cash_order()`. `EXECUTE` revoked from
+  `public`/`anon`/`authenticated` — never called directly.
+- `record_seller_cash_status(...)` (Phase 4C) — internal, `SECURITY
+  DEFINER`; writes the `seller_cash_status` audit snapshot. Same
+  `EXECUTE` restriction as above.
+- `is_seller_cash_eligible(p_seller_type, p_seller_profile_id,
+  p_business_id)` (Phase 4C) — the public-safe wrapper around
+  `evaluate_cash_eligibility()`; returns only a boolean, never
+  `failed_criteria`. `EXECUTE`: `authenticated` only.
+- `accept_cash_order(p_order_id)` / `decline_cash_order(p_order_id,
+  p_reason default null)` (Phase 4C) — `SECURITY DEFINER`, seller-only;
+  `pending_payment → confirmed`/`cancelled`. `EXECUTE`: `authenticated`
+  only.
+- `confirm_collection(p_order_id, p_code)` (Phase 4C) — `SECURITY
+  DEFINER`, seller-only; shared by cash and online-paid collection
+  orders. Validates the code with a 5-attempt lockout, returns an
+  `outcome` (`completed | incorrect_code | locked | already_completed`)
+  rather than raising for a wrong code. `EXECUTE`: `authenticated` only.
+- `get_my_collection_code(p_order_id)` (Phase 4C) — `SECURITY DEFINER`,
+  buyer-only; the sole sanctioned way to read a raw `collection_code`.
+  `EXECUTE`: `authenticated` only.
 - `handle_new_user()` — creates a `profiles` row on `auth.users` insert.
 - `set_updated_at()` — generic `updated_at` maintenance trigger, applied
   to every table that has one.
@@ -442,6 +479,8 @@ what goes in each and why they're separate.
 - `apply_order_completion_to_seller_stats()` — increments
   `completed_transaction_count` when an order's status transitions to
   `completed`, feeding the cash-eligibility criterion of the same name.
+  Fires unchanged for a cash order completed via `confirm_collection()`
+  (Phase 4C) — no new trigger was needed.
 
 ## Migration index
 
@@ -472,6 +511,7 @@ what goes in each and why they're separate.
 | `20260924090000_location_ownership_review_fixes.sql` | Security review follow-up: same ownership `WITH CHECK` extended to `profiles_insert_own`/`profiles_update_own_or_admin` for `location_id`; `search_nearby_products()`'s `EXECUTE` grant tightened to exclude the default `PUBLIC` grant |
 | `20260925090000_orders_checkout.sql` | `orders.order_reference` column (+ default generator); `create_order()` — the `SECURITY DEFINER`, atomic order-creation entry point |
 | `20260926090000_payfast_payment_integration.sql` | Seeded `payfast` `payment_providers` row (inactive by default); partial unique index on `payments.provider_reference`; `create_order()` provider lookup fixed (`CREATE OR REPLACE`, no longer hardcoded to `mock`); `record_payment_attempt()` (`SECURITY DEFINER`) and `process_payfast_itn()` (not `SECURITY DEFINER`, `service_role`-only) |
+| `20260927090000_cash_collection_transactions.sql` | `commission_settlement_status` enum + `commissions.settlement_status` column; `cash_settings` singleton (global kill-switch); `collection_confirmations.failed_attempts`; column-level SELECT fix excluding `collection_code` from `authenticated`'s grant; `orders_cash_requires_collection` CHECK; `create_order()` extended with `p_payment_method` (DROP + CREATE); `evaluate_cash_eligibility()`/`record_seller_cash_status()` (internal), `is_seller_cash_eligible()`, `accept_cash_order()`, `decline_cash_order()`, `confirm_collection()`, `get_my_collection_code()` |
 
 ## Local workflow
 
