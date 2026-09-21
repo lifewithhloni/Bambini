@@ -62,6 +62,16 @@ export type Database = {
           avatar_url: string | null;
           phone: string | null;
           location_id: string | null;
+          // Phase 5: account_verification is retained but no longer
+          // read by anything authorization-relevant — account
+          // verification is derived live from auth.users
+          // (email_confirmed_at/phone_confirmed_at) via can_transact(),
+          // never cached here. identity_verification IS still
+          // authoritative-by-cache: a trigger
+          // (sync_profile_identity_verification()) keeps it equal to
+          // the latest identity_verifications row's status every time
+          // one is inserted or reviewed — see
+          // 20260928090000_identity_account_verification.sql.
           account_verification: VerificationStatus;
           identity_verification: VerificationStatus;
           account_standing: AccountStanding;
@@ -92,6 +102,49 @@ export type Database = {
             foreignKeyName: "profiles_location_id_fkey";
             columns: ["location_id"];
             referencedRelation: "locations";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Phase 5. id_number is deliberately included here (never on
+      // profiles or any broadly-readable table) — RLS restricts SELECT
+      // to the submitting owner or an admin (row-level; there is no
+      // "other legitimate participant" concept for this table the way
+      // orders has buyer+seller). Insert matches the exact column-level
+      // GRANT (status/reviewed_by/reviewed_at/notes fall back to their
+      // defaults regardless of what's sent). Update is `never` — the
+      // only sanctioned write to status/reviewed_by/reviewed_at/notes is
+      // the review_identity_verification() RPC, never a raw client
+      // UPDATE (the RLS policy that used to allow one was dropped by
+      // this same migration).
+      identity_verifications: {
+        Row: {
+          id: string;
+          profile_id: string;
+          provider: string;
+          document_type: string;
+          document_storage_path: string;
+          id_number: string;
+          status: VerificationStatus;
+          reviewed_by: string | null;
+          reviewed_at: string | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          profile_id: string;
+          provider: string;
+          document_type: string;
+          document_storage_path: string;
+          id_number: string;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "identity_verifications_profile_id_fkey";
+            columns: ["profile_id"];
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
         ];
@@ -688,7 +741,11 @@ export type Database = {
       // has no ownership-based UPDATE grant on a product they don't own.
       // Every value it writes is derived inside the function body from
       // auth.uid() and the product row — see
-      // 20260925090000_orders_checkout.sql.
+      // 20260925090000_orders_checkout.sql. Phase 5: also raises
+      // "Account verification required before purchasing." up front if
+      // the caller isn't fully verified (see can_transact() below) —
+      // this is unconditional, not something a client can influence via
+      // any argument.
       create_order: {
         Args: {
           p_product_id: string;
@@ -702,6 +759,32 @@ export type Database = {
           order_id: string;
           order_reference: string;
         }[];
+      };
+      // Phase 5 — the single reusable "am I allowed to transact" check:
+      // confirmed email AND confirmed phone (live from auth.users) AND
+      // latest identity_verifications status = 'verified'. Never takes a
+      // parameter — always answers for the caller only, so it's safe to
+      // call directly from the client (e.g. the account/checkout/sell UI
+      // deciding what to show), never a privacy leak. The actual
+      // enforcement lives in create_order()/the products publish
+      // trigger, not here — this is the same check, exposed for display.
+      can_transact: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
+      // SECURITY DEFINER, admin-only (checked internally via is_admin() —
+      // EXECUTE is granted broadly to `authenticated` since there's no
+      // separate Postgres role for "admin"). State-machine-safe: only a
+      // currently-'pending' submission can be decided. Always sets
+      // reviewed_by from auth.uid(), never from a parameter. See
+      // 20260928090000_identity_account_verification.sql.
+      review_identity_verification: {
+        Args: {
+          p_submission_id: string;
+          p_decision: "verified" | "rejected";
+          p_notes?: string | null;
+        };
+        Returns: undefined;
       };
       // Public-safe wrapper around evaluate_cash_eligibility() — returns
       // only a boolean, never the internal failed_criteria. The checkout

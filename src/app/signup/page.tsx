@@ -27,6 +27,15 @@ function SignUpForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "";
 
+  if (state && "confirmationSent" in state) {
+    return (
+      <p role="status" className="rounded-lg bg-brand-sage/20 px-3 py-3 text-sm text-brand-ink">
+        Check your email to confirm your account before signing in. You&apos;ll be able to browse right away, but buying and
+        selling need a confirmed email.
+      </p>
+    );
+  }
+
   return (
     <>
       <form action={formAction} className="flex flex-col gap-4">

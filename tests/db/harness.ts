@@ -36,6 +36,19 @@ export async function bootDb(): Promise<PGlite> {
     create table auth.users (
       id uuid primary key default gen_random_uuid(),
       email text,
+      -- Phase 5: the columns is_profile_fully_verified()/can_transact()
+      -- actually read. Real Supabase's auth.users has both; this stub
+      -- mirrors just the two columns any migration function touches, the
+      -- same "minimal stand-in for what Supabase provisions" scope this
+      -- file's own header comment already describes for the rest of the
+      -- table. Neither is granted to anon/authenticated below (matching
+      -- real Supabase — the auth schema is never directly queryable by
+      -- client roles), so the only way anything in tests ever reads them
+      -- is through the SECURITY DEFINER functions that are the actual
+      -- thing under test.
+      phone text,
+      email_confirmed_at timestamptz,
+      phone_confirmed_at timestamptz,
       raw_user_meta_data jsonb not null default '{}'::jsonb
     );
     create function auth.uid() returns uuid
@@ -161,10 +174,41 @@ export async function asServiceRole<T>(db: PGlite, fn: () => Promise<T>): Promis
   }
 }
 
-export async function makeUser(db: PGlite, fullName: string): Promise<string> {
+// Unique-per-process, not per-db — fine, since PGlite instances in this
+// suite are never shared across test files and each test file's users
+// only need to be unique within its own single in-memory database.
+let fixtureIdNumberCounter = 0;
+
+/**
+ * Phase 5: fully verified (confirmed email, confirmed phone, an approved
+ * identity_verifications row) by default — most tests are not *about*
+ * verification, and a real, eligible user is the more useful default
+ * fixture, the same reasoning Phase 4C's makeEligibleSeller() already
+ * used for cash eligibility specifically. Pass `{ verified: false }` for
+ * a test that genuinely needs an unverified user (this file's own
+ * verification.test.ts, and a handful of targeted cash-eligibility
+ * tests) — nothing else needs to change at existing call sites.
+ */
+export async function makeUser(db: PGlite, fullName: string, opts: { verified?: boolean } = {}): Promise<string> {
+  const verified = opts.verified ?? true;
+
   const r: Results<{ id: string }> = await db.query(
-    `insert into auth.users (raw_user_meta_data) values (jsonb_build_object('full_name', $1::text)) returning id`,
-    [fullName],
+    `insert into auth.users (raw_user_meta_data, email_confirmed_at, phone_confirmed_at)
+     values (jsonb_build_object('full_name', $1::text), $2, $2)
+     returning id`,
+    [fullName, verified ? new Date().toISOString() : null],
   );
-  return r.rows[0].id; // handle_new_user() trigger creates the matching profiles row
+  const id = r.rows[0].id; // handle_new_user() trigger creates the matching profiles row
+
+  if (verified) {
+    fixtureIdNumberCounter += 1;
+    const idNumber = `8001015${String(fixtureIdNumberCounter).padStart(6, "0")}`; // 13 digits, unique per fixture
+    await db.query(
+      `insert into public.identity_verifications (profile_id, provider, document_type, document_storage_path, id_number, status, reviewed_at)
+       values ($1, 'manual', 'sa_id', 'test-fixtures/id.jpg', $2, 'verified', now())`,
+      [id, idNumber],
+    );
+  }
+
+  return id;
 }

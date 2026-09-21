@@ -24,7 +24,13 @@ enable_signup = true
 
 [auth.email]
 enable_signup = true
-enable_confirmations = false
+# Phase 5: local/dev now reflects intended production behaviour — email
+# confirmation is required before account_verification-relevant state
+# (auth.users.email_confirmed_at) can ever become true. signUp() (see
+# src/server/auth/actions.ts) branches on whether a session actually
+# came back, since a signup with confirmation pending returns no active
+# session until the user clicks the confirmation link.
+enable_confirmations = true
 
 [storage]
 enabled = true

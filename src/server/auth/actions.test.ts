@@ -54,7 +54,7 @@ describe("signUp action", () => {
   });
 
   it("calls supabase.auth.signUp with normalized email and full_name metadata, no user id", async () => {
-    signUpMock.mockResolvedValue({ error: null });
+    signUpMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
 
     await expect(signUp(null, formData(validFields))).rejects.toThrow(RedirectSignal);
 
@@ -69,28 +69,35 @@ describe("signUp action", () => {
     expect(call.options.data).not.toHaveProperty("role");
   });
 
-  it("redirects to /account by default on success", async () => {
-    signUpMock.mockResolvedValue({ error: null });
+  it("redirects to /account by default when signup returns an active session (email confirmation not required)", async () => {
+    signUpMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
     await expect(signUp(null, formData(validFields))).rejects.toThrow(RedirectSignal);
     expect(redirect).toHaveBeenCalledWith("/account");
   });
 
-  it("redirects to a safe ?next= target when provided", async () => {
-    signUpMock.mockResolvedValue({ error: null });
+  it("redirects to a safe ?next= target when provided and a session was created", async () => {
+    signUpMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
     await expect(signUp(null, formData({ ...validFields, next: "/account/orders" }))).rejects.toThrow(RedirectSignal);
     expect(redirect).toHaveBeenCalledWith("/account/orders");
   });
 
   it("ignores an unsafe ?next= target and falls back to /account", async () => {
-    signUpMock.mockResolvedValue({ error: null });
+    signUpMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
     await expect(
       signUp(null, formData({ ...validFields, next: "https://evil.example.com" })),
     ).rejects.toThrow(RedirectSignal);
     expect(redirect).toHaveBeenCalledWith("/account");
   });
 
+  it("Phase 5: does NOT redirect when signup returns no session (email confirmation pending) — reports confirmationSent instead", async () => {
+    signUpMock.mockResolvedValue({ data: { session: null }, error: null });
+    const result = await signUp(null, formData(validFields));
+    expect(result).toEqual({ confirmationSent: true });
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
   it("surfaces a Supabase error without redirecting", async () => {
-    signUpMock.mockResolvedValue({ error: { message: "User already registered" } });
+    signUpMock.mockResolvedValue({ data: { session: null }, error: { message: "User already registered" } });
     const result = await signUp(null, formData(validFields));
     expect(result).toEqual({ error: "User already registered" });
     expect(redirect).not.toHaveBeenCalled();

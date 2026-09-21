@@ -7,6 +7,17 @@ import { safeRedirectPath, signInSchema, signUpSchema } from "./validation";
 export type AuthActionState = { error: string } | null;
 
 /**
+ * Phase 5: enable_confirmations = true (supabase/config.toml) means a
+ * signup no longer returns an active session immediately — Supabase
+ * only creates one once the user clicks the link in the confirmation
+ * email. `data.session` is how the client SDK reports that: present on
+ * an instant-session signup, null while confirmation is pending. There
+ * is no other reliable, server-authoritative way to distinguish the two
+ * outcomes from this action.
+ */
+export type SignUpActionState = { error: string } | { confirmationSent: true } | null;
+
+/**
  * Every field here comes from the form the user submitted — there is no
  * user id anywhere in this input. Supabase Auth derives the id, and the
  * `handle_new_user()` database trigger creates the matching `profiles`
@@ -14,7 +25,7 @@ export type AuthActionState = { error: string } | null;
  * auth.users insert, so there's no window where an account exists
  * without a profile, and no client-supplied id for the trigger to trust.
  */
-export async function signUp(_prevState: AuthActionState, formData: FormData): Promise<AuthActionState> {
+export async function signUp(_prevState: SignUpActionState, formData: FormData): Promise<SignUpActionState> {
   const parsed = signUpSchema.safeParse({
     fullName: formData.get("fullName"),
     email: formData.get("email"),
@@ -26,7 +37,7 @@ export async function signUp(_prevState: AuthActionState, formData: FormData): P
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
     options: { data: { full_name: parsed.data.fullName } },
@@ -34,6 +45,10 @@ export async function signUp(_prevState: AuthActionState, formData: FormData): P
 
   if (error) {
     return { error: error.message };
+  }
+
+  if (!data.session) {
+    return { confirmationSent: true };
   }
 
   redirect(safeRedirectPath(formData.get("next")));

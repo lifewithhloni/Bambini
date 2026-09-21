@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
+import Link from "next/link";
 import { createOrder } from "@/server/orders/actions";
 
 function PlaceOrderButton() {
@@ -103,9 +104,14 @@ export function PlaceOrderForm({
       )}
 
       {state && "error" in state && (
-        <p role="alert" className="rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
-          {state.error}
-        </p>
+        <div role="alert" className="flex flex-col gap-2 rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
+          <p>{state.error}</p>
+          {state.verificationRequired && (
+            <Link href="/account/verification" className="font-medium underline">
+              Verify your account
+            </Link>
+          )}
+        </div>
       )}
 
       <PlaceOrderButton />

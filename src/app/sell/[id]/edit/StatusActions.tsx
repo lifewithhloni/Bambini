@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { changeListingStatus, deleteListing } from "@/server/listings/actions";
+import Link from "next/link";
+import { changeListingStatus, deleteListing, type StatusActionResult } from "@/server/listings/actions";
 import { canTransition, type ListingStatus } from "@/server/listings/statusTransitions";
 
 const buttonClass =
@@ -15,14 +16,17 @@ const dangerButtonClass =
 export function StatusActions({ listingId, status }: { listingId: string; status: ListingStatus }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [verificationRequired, setVerificationRequired] = useState(false);
   const router = useRouter();
 
-  function run(action: () => Promise<{ error: string } | { success: true }>) {
+  function run(action: () => Promise<StatusActionResult>) {
     setError(null);
+    setVerificationRequired(false);
     startTransition(async () => {
       const result = await action();
       if ("error" in result) {
         setError(result.error);
+        setVerificationRequired(!!result.verificationRequired);
       } else {
         router.refresh();
       }
@@ -86,9 +90,14 @@ export function StatusActions({ listingId, status }: { listingId: string; status
         )}
       </div>
       {error && (
-        <p role="alert" className="rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
-          {error}
-        </p>
+        <div role="alert" className="flex flex-col gap-2 rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
+          <p>{error}</p>
+          {verificationRequired && (
+            <Link href="/account/verification" className="font-medium underline">
+              Verify your account
+            </Link>
+          )}
+        </div>
       )}
     </div>
   );

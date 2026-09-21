@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/server/auth/requireUser";
 import { fulfilmentTypeSchema, paymentMethodSchema } from "./validation";
 
-export type CreateOrderState = { error: string } | null;
+export type CreateOrderState = { error: string; verificationRequired?: boolean } | null;
 
 /**
  * Every value that actually matters financially — price, commission
@@ -52,6 +52,13 @@ export async function createOrder(
   });
 
   if (error || !data || data.length === 0) {
+    // Phase 5: create_order() rejects an unverified buyer up front,
+    // before touching the product — surfaced distinctly so the checkout
+    // UI can offer a direct path to /account/verification rather than
+    // just a dead-end error string.
+    if (error?.message && /account verification required/i.test(error.message)) {
+      return { error: "Account verification required before purchasing.", verificationRequired: true };
+    }
     return { error: humanizeOrderError(error?.message) };
   }
 

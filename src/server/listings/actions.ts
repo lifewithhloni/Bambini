@@ -239,7 +239,7 @@ export async function updateListing(
   return null;
 }
 
-export type StatusActionResult = { error: string } | { success: true };
+export type StatusActionResult = { error: string; verificationRequired?: boolean } | { success: true };
 
 export async function changeListingStatus(listingId: string, target: ListingStatus): Promise<StatusActionResult> {
   await requireUser();
@@ -278,6 +278,14 @@ export async function changeListingStatus(listingId: string, target: ListingStat
     .eq("id", listingId);
 
   if (updateError) {
+    // Phase 5: enforce_seller_verification_on_publish() (a database
+    // trigger, not an RLS policy) rejects this with a specific message
+    // when the seller isn't fully verified — surfaced distinctly so the
+    // UI can offer a direct path to /account/verification rather than a
+    // dead-end error. See 20260928090000_identity_account_verification.sql.
+    if (/account verification required/i.test(updateError.message)) {
+      return { error: "Account verification required before publishing a listing.", verificationRequired: true };
+    }
     return { error: "Could not update the listing status." };
   }
 

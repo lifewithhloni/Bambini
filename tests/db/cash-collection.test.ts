@@ -166,7 +166,10 @@ describe("cash collection transactions", () => {
 
     it("8. missing account verification fails eligibility", async () => {
       const seller = await makeEligibleSeller("Unverified Account Seller");
-      await db.query(`update public.profiles set account_verification = 'unverified' where id = $1`, [seller]);
+      // Phase 5: account verification is derived live from auth.users, not
+      // the (now-inert) profiles.account_verification column — see
+      // 20260928090000_identity_account_verification.sql.
+      await db.query(`update auth.users set email_confirmed_at = null where id = $1`, [seller]);
       const buyer = await makeUser(db, "Unverified Account Buyer");
       const productId = await makeProduct(seller, "Unverified Account Toy");
       await asUser(db, buyer, async () => {
