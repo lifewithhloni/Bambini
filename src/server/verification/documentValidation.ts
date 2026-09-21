@@ -8,7 +8,7 @@ export type DocumentValidationResult = { ok: true } | { ok: false; error: string
 
 export function validateDocumentFile(file: DocumentFileLike): DocumentValidationResult {
   if (!ALLOWED_DOCUMENT_MIME_TYPES.includes(file.type as (typeof ALLOWED_DOCUMENT_MIME_TYPES)[number])) {
-    return { ok: false, error: "Upload a PNG, JPEG, or PDF of your ID document." };
+    return { ok: false, error: "Upload a PNG, JPEG, or PDF." };
   }
   if (file.size <= 0) {
     return { ok: false, error: "The selected file is empty." };
@@ -36,4 +36,18 @@ const EXTENSION_BY_MIME: Record<string, string> = {
 export function buildVerificationDocumentPath(userId: string, mimeType: string, randomToken: string): string {
   const ext = EXTENSION_BY_MIME[mimeType] ?? "bin";
   return `${userId}/${randomToken}/id-document.${ext}`;
+}
+
+/**
+ * Phase 6 — the same private verification-documents bucket, namespaced
+ * under a literal "business/" first segment so it can never collide
+ * with an individual's "<user-id>/..." path above. The storage policies
+ * (business_verification_documents_storage_*, see
+ * 20260929090000_business_onboarding_storefront.sql) check this exact
+ * shape: segment[1] = 'business', segment[2] = the business id, gated
+ * by is_business_member().
+ */
+export function buildBusinessVerificationDocumentPath(businessId: string, mimeType: string, randomToken: string): string {
+  const ext = EXTENSION_BY_MIME[mimeType] ?? "bin";
+  return `business/${businessId}/${randomToken}/document.${ext}`;
 }

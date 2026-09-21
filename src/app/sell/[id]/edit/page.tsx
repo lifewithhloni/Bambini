@@ -47,7 +47,7 @@ export default async function EditListingPage({
         </p>
       ) : (
         <>
-          <StatusActions listingId={listing.id} status={listing.status} />
+          <StatusActions listingId={listing.id} status={listing.status} businessId={listing.business_id} />
           <ImageManager listingId={listing.id} images={images} />
           <EditListingForm listing={listing} categories={categories} />
         </>

@@ -13,20 +13,23 @@ const primaryButtonClass =
 const dangerButtonClass =
   "rounded-full border border-brand-danger px-4 py-2 text-sm font-medium text-brand-danger hover:bg-brand-danger/10 disabled:opacity-50";
 
-export function StatusActions({ listingId, status }: { listingId: string; status: ListingStatus }) {
+export function StatusActions({ listingId, status, businessId }: { listingId: string; status: ListingStatus; businessId?: string | null }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [verificationRequired, setVerificationRequired] = useState(false);
+  const [businessVerificationRequired, setBusinessVerificationRequired] = useState(false);
   const router = useRouter();
 
   function run(action: () => Promise<StatusActionResult>) {
     setError(null);
     setVerificationRequired(false);
+    setBusinessVerificationRequired(false);
     startTransition(async () => {
       const result = await action();
       if ("error" in result) {
         setError(result.error);
         setVerificationRequired(!!result.verificationRequired);
+        setBusinessVerificationRequired(!!result.businessVerificationRequired);
       } else {
         router.refresh();
       }
@@ -95,6 +98,11 @@ export function StatusActions({ listingId, status }: { listingId: string; status
           {verificationRequired && (
             <Link href="/account/verification" className="font-medium underline">
               Verify your account
+            </Link>
+          )}
+          {businessVerificationRequired && businessId && (
+            <Link href={`/account/business/${businessId}`} className="font-medium underline">
+              Verify your business
             </Link>
           )}
         </div>

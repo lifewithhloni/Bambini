@@ -67,6 +67,13 @@ export default async function AccountPage() {
           >
             Your orders
           </Link>
+
+          <Link
+            href="/account/business"
+            className="rounded-full border border-brand-sage-dark px-4 py-2 text-center text-sm font-medium text-brand-ink hover:bg-brand-bg"
+          >
+            Your businesses
+          </Link>
         </>
       )}
     </div>

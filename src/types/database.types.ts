@@ -257,6 +257,39 @@ export type Database = {
         ];
       };
 
+      // Phase 6, mirroring identity_verifications exactly. Update is
+      // `never` — the only sanctioned write to status/reviewed_by/
+      // reviewed_at/notes is review_business_verification(); the RLS
+      // policy that used to allow a raw admin UPDATE was dropped by
+      // this migration (see 20260929090000_business_onboarding_storefront.sql).
+      business_verifications: {
+        Row: {
+          id: string;
+          business_id: string;
+          document_type: string;
+          document_storage_path: string;
+          status: VerificationStatus;
+          reviewed_by: string | null;
+          reviewed_at: string | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          business_id: string;
+          document_type: string;
+          document_storage_path: string;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "business_verifications_business_id_fkey";
+            columns: ["business_id"];
+            referencedRelation: "businesses";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
       products: {
         Row: {
           id: string;
@@ -779,6 +812,17 @@ export type Database = {
       // reviewed_by from auth.uid(), never from a parameter. See
       // 20260928090000_identity_account_verification.sql.
       review_identity_verification: {
+        Args: {
+          p_submission_id: string;
+          p_decision: "verified" | "rejected";
+          p_notes?: string | null;
+        };
+        Returns: undefined;
+      };
+      // Phase 6 — identical pattern to review_identity_verification(),
+      // for business_verifications instead. See
+      // 20260929090000_business_onboarding_storefront.sql.
+      review_business_verification: {
         Args: {
           p_submission_id: string;
           p_decision: "verified" | "rejected";

@@ -35,6 +35,27 @@ async function resolveOwnPickupLocationId(
   return data?.location_id ?? null;
 }
 
+/**
+ * Phase 6: the business equivalent of resolveOwnPickupLocationId() —
+ * businesses have their own location_id (set via
+ * updateBusinessLocation()), separate from the acting individual's own
+ * profiles.location_id, since a listing sold *as* a business should be
+ * collected from the business's own saved location, not whichever
+ * individual happens to be managing it. Read-only lookup; the actual
+ * authorization for *which* business_id this listing may reference is
+ * RLS's own products_insert_owner policy (is_business_member()), not
+ * this function.
+ */
+async function resolveBusinessPickupLocationId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  businessId: string,
+  collectionAvailable: boolean,
+): Promise<string | null> {
+  if (!collectionAvailable) return null;
+  const { data } = await supabase.from("businesses").select("location_id").eq("id", businessId).maybeSingle();
+  return data?.location_id ?? null;
+}
+
 function extractImageFiles(formData: FormData): File[] {
   return formData
     .getAll("photos")
@@ -123,14 +144,15 @@ export async function createListing(_prev: ListingActionState, formData: FormDat
   if (imageError) return imageError;
 
   const supabase = await createClient();
-  // Business listings don't have a location workflow yet (business
-  // storefronts are Phase 7) — only a parent seller's own listing gets
-  // pickup_location_id auto-attached; a business listing is unaffected
-  // and simply doesn't participate in Nearby until that phase.
+  // Phase 6: a business-owned listing now resolves its pickup point from
+  // the business's own saved location (businesses.location_id), the
+  // same way a parent seller's listing resolves from their own profile.
   const pickupLocationId =
     parsed.data.sellerType === "parent"
       ? await resolveOwnPickupLocationId(supabase, user.id, parsed.data.collectionAvailable)
-      : null;
+      : parsed.data.businessId
+        ? await resolveBusinessPickupLocationId(supabase, parsed.data.businessId, parsed.data.collectionAvailable)
+        : null;
 
   const { data: product, error } = await supabase
     .from("products")
@@ -195,7 +217,7 @@ export async function updateListing(
   // the listing already existed, attaches pickup_location_id
   // retroactively rather than leaving it stuck at whatever was true when
   // the listing was first created.
-  const { data: existing } = await supabase.from("products").select("seller_type, status").eq("id", listingId).maybeSingle();
+  const { data: existing } = await supabase.from("products").select("seller_type, business_id, status").eq("id", listingId).maybeSingle();
   if (!existing) {
     return { error: "Listing not found." };
   }
@@ -212,7 +234,9 @@ export async function updateListing(
   const pickupLocationId =
     existing.seller_type === "parent"
       ? await resolveOwnPickupLocationId(supabase, user.id, parsed.data.collectionAvailable)
-      : null;
+      : existing.business_id
+        ? await resolveBusinessPickupLocationId(supabase, existing.business_id, parsed.data.collectionAvailable)
+        : null;
 
   const { data: updated, error } = await supabase
     .from("products")
@@ -239,7 +263,9 @@ export async function updateListing(
   return null;
 }
 
-export type StatusActionResult = { error: string; verificationRequired?: boolean } | { success: true };
+export type StatusActionResult =
+  | { error: string; verificationRequired?: boolean; businessVerificationRequired?: boolean }
+  | { success: true };
 
 export async function changeListingStatus(listingId: string, target: ListingStatus): Promise<StatusActionResult> {
   await requireUser();
@@ -285,6 +311,16 @@ export async function changeListingStatus(listingId: string, target: ListingStat
     // dead-end error. See 20260928090000_identity_account_verification.sql.
     if (/account verification required/i.test(updateError.message)) {
       return { error: "Account verification required before publishing a listing.", verificationRequired: true };
+    }
+    // Phase 6: the same trigger, extended — a business-type listing also
+    // requires businesses.verification_status = 'verified'. Distinct
+    // message/flag so the UI can point at the business's own
+    // verification page instead of the individual's.
+    if (/business is not yet verified/i.test(updateError.message)) {
+      return {
+        error: "This business is not yet verified. Submit business verification before publishing.",
+        businessVerificationRequired: true,
+      };
     }
     return { error: "Could not update the listing status." };
   }
