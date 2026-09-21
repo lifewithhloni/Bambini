@@ -33,13 +33,35 @@ For a hosted project, they're in Supabase project settings → API.
 | Variable | Secret? | Purpose |
 | --- | --- | --- |
 | `PAYMENT_PROVIDER` | No | Selects the active adapter (`src/server/payments/registry.ts`). `mock` needs no keys and is the default. |
-| `PAYFAST_MERCHANT_ID` / `PAYFAST_MERCHANT_KEY` / `PAYFAST_PASSPHRASE` | **Yes** | Only needed once a PayFast adapter is added and selected. |
+| `PAYFAST_MERCHANT_ID` / `PAYFAST_MERCHANT_KEY` | **Yes** | Required once `PAYMENT_PROVIDER=payfast`. From your PayFast account's Settings page (sandbox or live). |
+| `PAYFAST_PASSPHRASE` | **Yes** | Required for PayFast in practice (their signature algorithm accepts an unset passphrase, but PayFast requires one to be set on the account for anything beyond the most basic testing). Set under Settings → "Salt Passphrase" on the PayFast account. |
+| `PAYFAST_SANDBOX` | No | `true` (default, including when unset) uses `sandbox.payfast.co.za`; `"false"` (the literal string) switches to the live `www.payfast.co.za` host. Defaults to sandbox specifically so a missing/misconfigured value fails toward "test mode," never toward real charges. |
 | `YOCO_SECRET_KEY` | **Yes** | Only needed once a Yoco adapter is added and selected. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | **Yes** | Only needed once a Stripe adapter is added and selected. |
 
-No payment provider has been integrated yet — see
+**PayFast is the first real provider integrated (Phase 4B)** — see
 [ARCHITECTURE.md](ARCHITECTURE.md#payment-architecture) and
-[DECISIONS.md](DECISIONS.md) for which one to pick first.
+[DECISIONS.md](DECISIONS.md) for why. Selecting it takes two
+independent steps that must be done together: set
+`PAYMENT_PROVIDER=payfast` here, **and** set
+`payment_providers.is_active = true` for the `payfast` row (and
+`false` for `mock`) in the database — the env var picks which adapter
+*code* runs; the database flag picks which provider a *new order*
+attaches to at creation. Both default to `mock`/inactive, so a fresh
+environment behaves exactly as before until explicitly reconfigured.
+
+PayFast's webhook (their "ITN" — Instant Transaction Notification)
+needs a **publicly reachable** URL — `{NEXT_PUBLIC_SITE_URL}/api/payments/payfast/webhook`
+— to actually receive payment confirmations. This means:
+- Real end-to-end sandbox testing requires either a deployed
+  environment or a local tunnel (e.g. ngrok) exposing that route,
+  neither of which is available in this development environment (no
+  internet-exposed endpoint here) — see DECISIONS.md for what has and
+  hasn't been verified as a result.
+- `PAYFAST_MERCHANT_ID`/`PAYFAST_MERCHANT_KEY`/`PAYFAST_PASSPHRASE` are
+  not present in this repository or its `.env.local` — no real or
+  sandbox PayFast credentials have been configured anywhere in this
+  project.
 
 ## Delivery
 

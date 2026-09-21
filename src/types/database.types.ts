@@ -626,6 +626,31 @@ export type Database = {
           order_reference: string;
         }[];
       };
+      // SECURITY DEFINER — no UPDATE policy exists on payments for
+      // `authenticated`. Re-validates auth.uid()=buyer_id, order/payment
+      // status server-side. See 20260926090000_payfast_payment_integration.sql.
+      record_payment_attempt: {
+        Args: {
+          p_order_id: string;
+          p_provider_reference: string;
+        };
+        Returns: undefined;
+      };
+      // NOT SECURITY DEFINER — EXECUTE is restricted to service_role
+      // only (see the migration); called exclusively by the PayFast
+      // webhook route via the admin/service-role client, never via a
+      // normal authenticated session.
+      process_payfast_itn: {
+        Args: {
+          p_order_id: string;
+          p_provider_reference: string;
+          p_status: string;
+          p_amount_cents: number;
+        };
+        Returns: {
+          outcome: string;
+        }[];
+      };
     };
     Enums: {
       user_role: UserRole;

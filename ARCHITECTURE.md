@@ -203,6 +203,67 @@ trusted DB state (product price, delivery quote, `commission_rates`)
 before `createCheckout` is ever called, and a webhook's reported amount
 is checked against the order's stored `total_cents`, not trusted blindly.
 
+### PayFast (Phase 4B)
+
+The first real adapter — `src/server/payments/providers/payfast/`.
+PayFast's documented "Custom Integration" model is a browser form POST
+redirect (`https://[sandbox.|www.]payfast.co.za/eng/process`), not a
+server-to-server "create a session" call, so `createCheckout()` builds
+and signs a set of form fields rather than calling out to PayFast at
+all — `providerReference` at this point is Bambini's own order id (a
+placeholder), since PayFast issues no id of its own until the ITN
+arrives later. `PaymentProvider`'s three data shapes
+(`CheckoutSession`/`CreateCheckoutRequest`/`WebhookVerificationResult`)
+each gained a small, additive extension to accommodate this — see
+DECISIONS.md for exactly what and why; the interface itself is
+unchanged.
+
+**Sandbox vs. live is one explicit switch** (`PAYFAST_SANDBOX`,
+`src/server/payments/providers/payfast/config.ts`), defaulting to
+sandbox — a missing/misconfigured value fails toward "test mode," never
+toward real charges. Never inferred from `NODE_ENV` or hardcoded.
+
+**Signature generation** (`signature.ts`) implements PHP's `urlencode()`
+byte-by-byte from its documented safe-character rule
+(`A-Za-z0-9-_.`, space → `+`, everything else → uppercase `%XX`, even
+each byte of a multi-byte UTF-8 character) rather than patching
+JavaScript's `encodeURIComponent()` for known divergences — the latter
+would silently assume there are no *other* differences, which is
+exactly the kind of assumption "do not invent provider details" argues
+against. Field order matters and is never alphabetized, per PayFast's
+own explicit warning in their docs.
+
+**ITN (webhook) verification** (`payfast.ts`'s `verifyWebhook()`)
+implements PayFast's four documented checks: recompute and compare the
+signature (over the *posted* field order, which the route handler
+preserves by parsing the raw body with `URLSearchParams` rather than
+reconstructing it — a form-parsing round-trip could silently reorder
+fields and break this); a host/referer check
+(`isValidPayFastSenderHost()`, exported separately since it needs the
+incoming request's own headers, which `verifyWebhook()`'s existing
+signature has no way to carry); and PayFast's own server-side
+`/eng/query/validate` confirmation, whose literal `VALID` response is
+the strongest of the four checks and required before anything is
+trusted. The webhook route (`src/app/api/payments/payfast/webhook/
+route.ts`) additionally verifies the reported amount against
+`orders.total_cents` itself (inside `process_payfast_itn()`) — that's
+Bambini's own authoritative value, never re-trusted from the provider a
+second time without checking.
+
+**Amount conversion** (`src/server/payments/money.ts`) is the one
+authoritative cents ↔ `"499.99"`-style-decimal conversion every
+provider adapter goes through — integer arithmetic only, mirroring how
+`price.ts`'s Rand-input parsing already avoids floating point.
+
+**The atomic DB write** (`process_payfast_itn()`, called only by the
+webhook route via the service-role client) is deliberately *not*
+`SECURITY DEFINER` — its only caller already bypasses RLS via
+`service_role`, so the real protection is `EXECUTE` being granted only
+to that role (see DATABASE.md). This is the same reasoning, applied in
+the other direction, as `create_order()`/`record_payment_attempt()`
+needing `SECURITY DEFINER` because *their* caller is an ordinary
+`authenticated` user with no privilege at all.
+
 ## Delivery-provider abstraction
 
 Mirrors the payment abstraction, with one difference: checkout typically

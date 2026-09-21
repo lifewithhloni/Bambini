@@ -494,12 +494,112 @@ listing through the app. Consistent with every prior phase's treatment
 of business sellers — schema/logic first, UI when Phase 7 builds
 storefronts.
 
+**Phase 4B: PayFast chosen as the first real payment provider.**
+Resolves the "Which payment provider first?" open item. The codebase
+already implicitly pointed here before this phase started — the
+registry's own commented-out factory list and `ENVIRONMENT.md` both
+listed PayFast first — and their documented ITN (webhook) model is a
+complete, implementable server-side-verification flow using only
+Node's built-in `crypto`, no new dependency. PayFast's real developer
+documentation was fetched and read directly for this phase (their docs
+site is a JS-rendered SPA; a browser tool was needed since a plain
+fetch only returns the page shell) — nothing about their field names,
+signature algorithm, or ITN payload shape was guessed.
+
+**Phase 4B: three small, additive extensions to the existing
+`PaymentProvider` types — not a redesign.** The interface itself
+(`createCheckout`/`verifyWebhook`/`refund`, three methods, same
+signatures) is completely unchanged. What changed is the *data shapes*
+those methods pass, because the foundation phase designed them before
+any real provider's actual requirements were known:
+- `CheckoutSession` gained an optional `formFields` — PayFast's
+  documented "Custom Integration" flow is a browser form POST, not a
+  GET redirect the original `redirectUrl`-only shape assumed. Absent
+  (and functionally a no-op) for the mock adapter.
+- `CreateCheckoutRequest` gained optional `cancelUrl`/`notifyUrl`/
+  `itemName` — PayFast requires an item name and needs to know where to
+  send its webhook; the original shape had no field for either.
+- `WebhookVerificationResult`'s success case gained `merchantReference`
+  and `amountCents` — the webhook route needs to look up *which*
+  Bambini order an event is about and verify its amount against
+  `orders.total_cents`, and the adapter is the only thing that already
+  parsed the raw ITN body, so it hands both back rather than making the
+  route re-parse the same payload a second time.
+All three are optional/additive; the mock adapter needed only a small
+update (see `mock.ts`) to keep matching the (now slightly richer)
+shapes, not a rewrite.
+
+**Phase 4B: the host/referer check the webhook performs is
+`PayFastProvider`'s own separately-exported `isValidPayFastSenderHost()`
+function, not a fourth method on `verifyWebhook()`.** PayFast's own
+documented check needs the *incoming request's* headers
+(`HTTP_REFERER`), which `verifyWebhook(rawBody, signatureHeader)`'s
+existing signature has no way to carry without changing that method's
+signature for every provider. Keeping it as a separate, still
+PayFast-owned export avoids that interface change while still keeping
+all PayFast-specific knowledge (the hostname list, the check itself) in
+one module. This check is explicitly the weakest of the four PayFast
+documents — a header value, not cryptographic proof — and is treated
+that way: signature verification and the `/eng/query/validate` server
+confirmation are the actual trust anchors.
+
+**Phase 4B: `create_order()`'s payment-provider lookup changed from a
+hardcoded `slug = 'mock'` to `where is_active limit 1`.** Phase 4A only
+ever had one real provider (mock) to attach, so hardcoding its slug was
+harmless at the time; leaving it hardcoded now would mean every new
+order keeps attaching to mock even once PayFast is genuinely
+configured and selected. This is the one line of `create_order()`'s
+body that changed (via `CREATE OR REPLACE FUNCTION` — same signature,
+same return columns, no `DROP` needed) — everything else about the
+Phase 4A order-creation transaction is untouched. Operational
+consequence: `PAYMENT_PROVIDER` (which adapter *code* runs) and
+`payment_providers.is_active` (which provider a *new order* attaches
+to) are two independent switches that must be changed together — see
+ENVIRONMENT.md.
+
+**Phase 4B: payment confirmation moves `orders.status` to the existing
+`confirmed` value, not a new `paid` value.** The brief's own prose uses
+"PAID" as a plain-English label for "the order has been paid," but the
+`order_status` enum already has a state clearly designed for exactly
+this (`pending_payment` → `confirmed` → ... → `completed`, from the
+foundation phase — see the Phase 4A architecture note that reached the
+same conclusion for the same reason). Adding a second, near-synonymous
+`paid` value would duplicate what `confirmed` already means, which
+`DEVELOPMENT_PLAN.md`'s "Ongoing, every phase" rules and this phase's
+own "do not redesign" instruction both argue against.
+
+**Phase 4B: a failed payment can be retried, and a successful retry
+(`payments.status` FAILED → PAID) is explicitly allowed, not blocked.**
+The phase brief's own state-machine section flags FAILED → PAID as
+something to block "unless... designed explicitly" — this is that
+explicit design: `orders.status` deliberately stays `pending_payment`
+after a failed/cancelled payment specifically so the buyer can try
+again (see the phase brief's own "PAYMENT FAILURE" section), and a
+"you failed once, you can never pay for this order again" rule would
+directly contradict that. What remains genuinely blocked, unconditionally,
+is any transition *away from* `PAID` — `process_payfast_itn()`'s first
+check, before anything else, is "if already paid, ignore" — see
+DATABASE.md.
+
+**Phase 4B: no automatic reversal of the Phase 4A "sold" listing status
+on payment failure.** A failed/abandoned/cancelled payment leaves the
+order at `pending_payment` (retryable) but leaves the underlying
+product at `status = 'sold'` — it is not put back to `published`. The
+phase brief explicitly warned against an unsafe shortcut here, and it's
+a real gap worth having: right now, a buyer whose payment fails has no
+way to free up the listing for someone else (or for themselves, on a
+different listing) without a human/admin intervening, and there's no
+expiry/timeout concept for an abandoned pending-payment order at all.
+Solving this properly needs its own design (when does a
+pending-payment order actually expire? does the *original* buyer get
+another shot before the listing reopens? what happens to a payment
+that lands *after* expiry?) — tracked as an Open item below rather than
+guessed at here.
+
 ## Open — needs product/stakeholder input before the relevant phase
 
-1. **Which payment provider first?** PayFast and Yoco are the common
-   South African choices (local card/EFT support); Stripe has broader
-   tooling but weaker local payment-method coverage. Needed before Phase
-   4/5.
+1. ~~Which payment provider first?~~ **Resolved in Phase 4B: PayFast**
+   — see the "Decided" section below.
 2. **Which delivery provider first?** Needed before Phase 5. Affects
    what a real `DeliveryProvider` adapter has to handle (quote shape,
    booking flow, webhook vs. polling for status).
@@ -613,3 +713,39 @@ storefronts.
     but worth a conscious product decision later on whether a sold
     listing should ever be able to move to `archived` for the seller's
     own record-keeping.
+18. **Phase 4B: live PayFast sandbox round-trip has not been verified**
+    — no PayFast credentials (sandbox or live) exist anywhere in this
+    project or environment, and the ITN webhook needs a *publicly
+    reachable* URL to receive anything, which this environment doesn't
+    have either (no tunnel/deployment). What has been verified: every
+    documented algorithm (signature generation/verification, ITN field
+    parsing, the query/validate request shape) against real, directly-
+    fetched PayFast documentation, via deterministic unit tests and
+    fixtures — and every database state transition against a real
+    Postgres engine. What has *not* been verified: that PayFast's own
+    servers actually accept a signature this implementation generates,
+    or that a real ITN round-trip completes end to end. Needed before
+    going live with real payments — PayFast's own "signature tool"
+    (mentioned in their docs) or a sandbox account plus a tunnel (ngrok/
+    similar) would let this be confirmed without a full deployment.
+19. **Phase 4B: whether PHP's `urlencode()` percent-encodes `~` is not
+    fully certain from documentation alone** (`payFastUrlEncode()` in
+    `signature.ts` currently does encode it, following the traditional/
+    documented urlencode() safe-character set of `A-Za-z0-9-_.` only —
+    distinct from `rawurlencode()`, which stopped encoding `~` in PHP
+    5.6+). `~` is a rare character in the field values Bambini would
+    ever actually send (order UUIDs, names, item descriptions), so the
+    practical exposure is low, but this is exactly the kind of subtle
+    encoding detail that can't be confirmed without either a live PHP
+    interpreter or PayFast's own signature tool — flagged rather than
+    asserted as certain.
+20. **Phase 4B: no expiry/timeout design exists for an abandoned
+    `pending_payment` order** — see the "Decided" section's note on why
+    a failed payment doesn't release the listing automatically. A
+    buyer who starts checkout, never completes or explicitly fails
+    payment, and simply walks away leaves that listing `sold` (removed
+    from search/browse) indefinitely, with no mechanism to release it.
+    Needed before this could reasonably be called "the buyer flow is
+    complete" — a real product/architecture decision (a timeout job? a
+    seller-initiated cancel? something else?), not something to guess
+    at inside this phase.

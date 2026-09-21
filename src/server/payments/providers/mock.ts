@@ -25,16 +25,30 @@ export class MockPaymentProvider implements PaymentProvider {
     _signatureHeader: string | null,
   ): Promise<WebhookVerificationResult> {
     try {
-      const payload = JSON.parse(rawBody) as { providerReference?: string; status?: string };
-      if (!payload.providerReference || !payload.status) return { valid: false };
-      if (!["paid", "failed", "refunded"].includes(payload.status)) return { valid: false };
+      const payload = JSON.parse(rawBody) as {
+        providerReference?: string;
+        merchantReference?: string;
+        status?: string;
+        amountCents?: number;
+      };
+      if (!payload.providerReference || !payload.merchantReference || !payload.status) {
+        return { valid: false, reason: "missing required field" };
+      }
+      if (!["paid", "failed", "refunded"].includes(payload.status)) {
+        return { valid: false, reason: "unrecognized status" };
+      }
+      if (typeof payload.amountCents !== "number" || !Number.isInteger(payload.amountCents)) {
+        return { valid: false, reason: "missing/invalid amountCents" };
+      }
       return {
         valid: true,
         providerReference: payload.providerReference,
+        merchantReference: payload.merchantReference,
         status: payload.status as "paid" | "failed" | "refunded",
+        amountCents: payload.amountCents,
       };
     } catch {
-      return { valid: false };
+      return { valid: false, reason: "malformed JSON body" };
     }
   }
 

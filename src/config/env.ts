@@ -12,6 +12,18 @@ const serverEnvSchema = z.object({
   NEXT_PUBLIC_SITE_URL: z.string().url().default("http://localhost:3000"),
   NEXT_PUBLIC_DEFAULT_CURRENCY: z.string().default("ZAR"),
   PAYMENT_PROVIDER: z.string().default("mock"),
+  // Optional at the schema level — only actually required once
+  // PAYMENT_PROVIDER=payfast, checked at first use by
+  // getPayFastCredentials() (src/server/payments/providers/payfast/config.ts),
+  // not here, so selecting "mock" (the default) never demands PayFast
+  // credentials exist at all.
+  PAYFAST_MERCHANT_ID: z.string().optional(),
+  PAYFAST_MERCHANT_KEY: z.string().optional(),
+  PAYFAST_PASSPHRASE: z.string().optional(),
+  // "false" (string, since all env vars are strings) selects the live
+  // PayFast host; anything else — including unset — stays sandbox. See
+  // getPayFastHosts() for why the safer default is sandbox, not live.
+  PAYFAST_SANDBOX: z.string().optional(),
   DELIVERY_PROVIDERS: z.string().default("mock"),
 });
 

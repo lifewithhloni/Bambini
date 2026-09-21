@@ -304,6 +304,73 @@ this with a real concurrent-request test (`Promise.allSettled` on two
 simultaneous calls), not just by reasoning about how `UPDATE ... WHERE`
 row locking works.
 
+### Online payments (Phase 4B)
+
+One new column, one new index, two new functions
+(`20260926090000_payfast_payment_integration.sql`), and one changed
+line in `create_order()` — the `orders`/`order_items`/`payments`/
+`commissions`/`transaction_events` tables themselves are untouched.
+
+- **`payment_providers`** gets a seeded `payfast` row, `is_active =
+  false` by default — a fresh/test database keeps behaving exactly as
+  Phase 4A did (every order attaches to `mock`) until an operator
+  explicitly flips this (together with `PAYMENT_PROVIDER=payfast` — see
+  ENVIRONMENT.md for why both have to change together).
+- **`payments_provider_reference_idx`** — a partial unique index on
+  `payments.provider_reference` (`WHERE provider_reference IS NOT
+  NULL`). Defense-in-depth against two different orders' payments rows
+  ever ending up with the same provider reference; the payment
+  lifecycle itself can't produce a second `payments` row per order
+  regardless, since `payments.order_id` was already unique.
+- **`create_order()`** (Phase 4A, redefined via `CREATE OR REPLACE` —
+  same signature, same return columns, so no `DROP` was needed): the
+  payment-provider lookup changed from a hardcoded `slug = 'mock'` to
+  `WHERE is_active LIMIT 1`, so a real order actually attaches to
+  whichever provider is genuinely configured, not permanently pinned to
+  the mock adapter. Nothing else in the function changed.
+- **`record_payment_attempt(p_order_id, p_provider_reference)`** —
+  `SECURITY DEFINER`, the payment-initiation write. Same justification
+  as `create_order()`: no `UPDATE` policy exists on `payments` for
+  `authenticated`, so a buyer paying for their own order still needs an
+  elevated, narrowly-scoped path. Re-validates ownership
+  (`auth.uid() = orders.buyer_id`), order status
+  (`pending_payment`), and payment status (`pending` or `failed` —
+  never a completed payment) from scratch every call; sets
+  `payments.status = 'pending'` and the new `provider_reference`, and
+  records a `payment.initiated` transaction event. `EXECUTE` restricted
+  to `authenticated`.
+- **`process_payfast_itn(p_order_id, p_provider_reference, p_status,
+  p_amount_cents)`** — the webhook's atomic state-mutation function,
+  called only by the webhook route via the service-role client, only
+  after that route has independently verified the PayFast signature,
+  host, and `/eng/query/validate` confirmation. Deliberately *not*
+  `SECURITY DEFINER` — its only legitimate caller (`service_role`)
+  already bypasses RLS regardless of the function's own security mode,
+  so `SECURITY DEFINER` would add no real privilege boundary here
+  (contrast `create_order()`/`record_payment_attempt()`, whose caller
+  is an ordinary `authenticated` user with none). `EXECUTE` is revoked
+  from `PUBLIC`/`anon`/`authenticated` and granted only to
+  `service_role` — *that* grant restriction is the actual protection
+  against a normal user calling this to fake a payment confirmation.
+  Independently re-verifies the reported amount against
+  `orders.total_cents` (Bambini's own authoritative value, checked
+  again here rather than trusted a second time from the caller) before
+  changing anything. Idempotent and state-machine-safe: a payment
+  already `paid` is never touched by any later event regardless of what
+  it claims (`tests/db/payfast.test.ts` proves this can't be downgraded
+  to either `pending` or `failed`); an exact repeat of an
+  already-recorded `failed` outcome for the same provider reference is
+  a no-op, not a second `transaction_events` row. A genuine retry
+  succeeding after a real failure (`failed` → `paid`, a *different*
+  provider reference) is allowed — see DECISIONS.md for why that's a
+  deliberate design choice, not an oversight. On success: `payments`
+  moves to `paid`/`failed`; `orders` moves `pending_payment` →
+  `confirmed` only for the `paid` case (the existing `order_status`
+  enum's own state for "payment succeeded," not a new value — see
+  DECISIONS.md); a `payment.confirmed`/`payment.failed`
+  `transaction_events` row is inserted; commission is never touched;
+  the product's `sold` status is never reverted.
+
 ## Delivery
 
 `delivery_quotes` can exist before an order does (a buyer comparing
@@ -359,6 +426,13 @@ what goes in each and why they're separate.
   INSERT policy exists on orders/payments/commissions/transaction_events
   for `authenticated`. See ARCHITECTURE.md and the migration's own
   comment.
+- `record_payment_attempt(p_order_id, p_provider_reference)` (Phase 4B)
+  — `SECURITY DEFINER`, same reasoning as `create_order()`; the
+  payment-initiation write. `EXECUTE`: `authenticated` only.
+- `process_payfast_itn(p_order_id, p_provider_reference, p_status,
+  p_amount_cents)` (Phase 4B) — NOT `SECURITY DEFINER` (its only caller,
+  `service_role`, already bypasses RLS); `EXECUTE`: `service_role` only.
+  See ARCHITECTURE.md.
 - `handle_new_user()` — creates a `profiles` row on `auth.users` insert.
 - `set_updated_at()` — generic `updated_at` maintenance trigger, applied
   to every table that has one.
@@ -397,6 +471,7 @@ what goes in each and why they're separate.
 | `20260923090000_nearby_search.sql` | `search_nearby_products()` extended (filters, pagination, distance/newest/price sort) via DROP + CREATE; `products_pickup_location_id_idx`; ownership `WITH CHECK` hardening on `products_insert_owner`/`products_update_owner_or_admin` for `pickup_location_id` |
 | `20260924090000_location_ownership_review_fixes.sql` | Security review follow-up: same ownership `WITH CHECK` extended to `profiles_insert_own`/`profiles_update_own_or_admin` for `location_id`; `search_nearby_products()`'s `EXECUTE` grant tightened to exclude the default `PUBLIC` grant |
 | `20260925090000_orders_checkout.sql` | `orders.order_reference` column (+ default generator); `create_order()` — the `SECURITY DEFINER`, atomic order-creation entry point |
+| `20260926090000_payfast_payment_integration.sql` | Seeded `payfast` `payment_providers` row (inactive by default); partial unique index on `payments.provider_reference`; `create_order()` provider lookup fixed (`CREATE OR REPLACE`, no longer hardcoded to `mock`); `record_payment_attempt()` (`SECURITY DEFINER`) and `process_payfast_itn()` (not `SECURITY DEFINER`, `service_role`-only) |
 
 ## Local workflow
 
@@ -502,6 +577,22 @@ fresh engine and applying every migration takes ~15-20s per test file,
   duplicate-submission test, commission rounding, fulfilment-method
   validation, and the function's own `SECURITY DEFINER`/`search_path`/
   grant posture.
+- `tests/db/payfast.test.ts` (Phase 4B, 31 tests) —
+  `record_payment_attempt()`/`process_payfast_itn()` against a real
+  Postgres engine: auth/ownership on payment initiation, retry-after-
+  failure allowed, a completed payment never replaced, amount/status
+  verification, the full idempotency and state-machine matrix (PAID
+  protected from downgrade to either PENDING or FAILED, duplicate
+  COMPLETE/CANCELLED events produce no duplicate `transaction_events`
+  row, a genuine FAILED → PAID retry succeeds), commission/payouts/
+  listing-status untouched by payment confirmation, and both
+  functions' `SECURITY DEFINER`/grant posture (including a direct
+  `service_role`-vs-`authenticated`-vs-`anon` access-control check on
+  `process_payfast_itn()` itself). PayFast's own protocol verification
+  (signature/host/query-validate) is unit-tested separately, against
+  fixtures, in `src/server/payments/providers/payfast/*.test.ts` — this
+  file covers what happens after that verification has already
+  succeeded.
 
 **Limitations of this approach**, so results aren't over-trusted: PGlite
 is a real Postgres engine, but this is not the full Supabase platform —

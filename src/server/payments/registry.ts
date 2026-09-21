@@ -1,10 +1,11 @@
 import { getServerEnv } from "@/config/env";
 import type { PaymentProvider } from "./types";
 import { MockPaymentProvider } from "./providers/mock";
+import { PayFastProvider } from "./providers/payfast/payfast";
 
 const providerFactories: Record<string, () => PaymentProvider> = {
   mock: () => new MockPaymentProvider(),
-  // payfast: () => new PayFastProvider(),
+  payfast: () => new PayFastProvider(),
   // yoco: () => new YocoProvider(),
   // stripe: () => new StripeProvider(),
 };

@@ -61,12 +61,12 @@ describe("createOrder", () => {
     expect(Object.keys(args).sort()).toEqual(["p_fulfilment_type", "p_product_id"]);
   });
 
-  it("redirects to the new order's own detail page on success", async () => {
+  it("redirects to the new order's payment step on success (Phase 4B: an order isn't done until it's paid — see actions.ts)", async () => {
     rpcMock.mockResolvedValue({ data: [{ order_id: "order-42", order_reference: "BMB-XYZ789" }], error: null });
 
     await expect(createOrder("product-1", null, formData({ fulfilmentType: "delivery" }))).rejects.toThrow(RedirectSignal);
 
-    expect(redirectMock).toHaveBeenCalledWith("/account/orders/order-42");
+    expect(redirectMock).toHaveBeenCalledWith("/orders/order-42/pay");
   });
 
   it("requires authentication before doing anything else", async () => {

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/requireUser";
 import { getOrder } from "@/server/orders/getOrder";
@@ -26,6 +27,14 @@ export default async function BuyerOrderDetailPage({ params }: { params: Promise
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-12">
       <h1 className="text-xl font-semibold text-brand-ink">Order details</h1>
       <OrderDetailView order={order} viewerRole="buyer" imageUrl={imageUrl} />
+      {(order.payment_status === "pending" || order.payment_status === "failed") && (
+        <Link
+          href={`/orders/${id}/pay`}
+          className="w-full rounded-full bg-brand-sage-dark px-4 py-3 text-center text-sm font-medium text-white hover:bg-brand-sage"
+        >
+          {order.payment_status === "failed" ? "Try payment again" : "Pay now"}
+        </Link>
+      )}
     </div>
   );
 }

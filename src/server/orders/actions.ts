@@ -40,7 +40,11 @@ export async function createOrder(
     return { error: humanizeOrderError(error?.message) };
   }
 
-  redirect(`/account/orders/${data[0].order_id}`);
+  // Phase 4B: the order now needs to actually be paid before it's
+  // "done" — /orders/[orderId]/pay is the new next step, not the final
+  // order-details page (still reachable afterwards via
+  // /account/orders/[orderId]).
+  redirect(`/orders/${data[0].order_id}/pay`);
 }
 
 /** create_order()'s own exception messages are safe to show as-is (see the migration — none of them ever include another user's data), but they're written for an SQL log reader, not a buyer, so the common ones get a friendlier rewording here. Anything unrecognized falls back to a generic message rather than surfacing raw Postgres error text. */
