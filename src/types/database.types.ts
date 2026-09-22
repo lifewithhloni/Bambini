@@ -467,6 +467,14 @@ export type Database = {
           status: OrderStatus;
           subtotal_cents: number;
           delivery_fee_cents: number;
+          // Phase 7C: the reconciliation breakdown behind delivery_fee_cents
+          // — the provider's own raw cost, the markup rate applied, and the
+          // resulting margin. Snapshotted once at order creation from the
+          // delivery_quotes row create_order() validated (see
+          // 20261002090000_delivery_markup.sql); always 0 for collection.
+          provider_delivery_cost_cents: number;
+          delivery_markup_percentage_bps: number;
+          delivery_markup_amount_cents: number;
           total_cents: number;
           commission_rate_bps: number;
           commission_amount_cents: number;
@@ -687,6 +695,33 @@ export type Database = {
         Relationships: [];
       };
 
+      // Phase 7C. Append-only history, mirroring commission_rates —
+      // "current" = the latest row by effective_from. Admin-only SELECT
+      // (delivery_markup_settings_select_admin); the only write path is
+      // update_delivery_markup_setting() (service-role/admin-checked
+      // internally). quoteService.ts reads this via the admin client,
+      // bypassing RLS the same way every other admin-only config table
+      // in this schema is read server-side.
+      delivery_markup_settings: {
+        Row: {
+          id: string;
+          markup_percentage_bps: number;
+          changed_by: string | null;
+          effective_from: string;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "delivery_markup_settings_changed_by_fkey";
+            columns: ["changed_by"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
       // Phase 7A. SELECT-only for `authenticated` (own quotes via
       // requested_by, or once attached, the order's own buyer — see
       // 20260930090000_delivery_quoting_booking.sql); every write goes
@@ -709,7 +744,15 @@ export type Database = {
           dropoff_location_id: string;
           provider_id: string;
           service_level: DeliveryServiceLevel;
+          // Phase 7C: price_cents is the buyer-facing quote (provider cost
+          // + markup) — unchanged meaning from Phase 7A. The three new
+          // columns are the breakdown behind it; never selected back out
+          // to the browser (see BuyerDeliveryQuote in quoteService.ts,
+          // same treatment as raw_response above).
           price_cents: number;
+          provider_cost_cents: number;
+          markup_percentage_bps: number;
+          markup_amount_cents: number;
           currency: string;
           eta_min_minutes: number | null;
           eta_max_minutes: number | null;
@@ -727,6 +770,9 @@ export type Database = {
           provider_id: string;
           service_level: DeliveryServiceLevel;
           price_cents: number;
+          provider_cost_cents: number;
+          markup_percentage_bps: number;
+          markup_amount_cents: number;
           currency?: string;
           eta_min_minutes?: number | null;
           eta_max_minutes?: number | null;
@@ -1028,6 +1074,14 @@ export type Database = {
           p_decision: "verified" | "rejected";
           p_notes?: string | null;
         };
+        Returns: undefined;
+      };
+      // Phase 7C. Admin-only (is_admin() checked internally, same
+      // pattern as review_identity_verification()). Always inserts a new
+      // delivery_markup_settings row (append-only) with changed_by =
+      // auth.uid() — never a parameter, never updates an existing row.
+      update_delivery_markup_setting: {
+        Args: { p_markup_percentage_bps: number };
         Returns: undefined;
       };
       // Public-safe wrapper around evaluate_cash_eligibility() — returns

@@ -234,7 +234,12 @@ export async function makeDeliveryQuote(
     productId: string;
     pickupLocationId: string;
     dropoffLocationId: string;
+    /** Shorthand for providerCostCents when no markup is being tested — kept for every pre-Phase-7C call site, which all implicitly mean "provider cost, 0% markup". */
     priceCents?: number;
+    /** Phase 7C: the provider's own raw cost. Defaults to priceCents (or 5000) — i.e. 0% markup — unless markupPercentageBps is also given. */
+    providerCostCents?: number;
+    /** Phase 7C: the rate to snapshot onto this quote, mirroring exactly what quoteService.ts would have read from delivery_markup_settings at fetch time. price_cents (the buyer-facing fee) is always derived from providerCostCents + this, never passed separately. */
+    markupPercentageBps?: number;
     serviceLevel?: "cheapest" | "standard" | "express";
     expiresInMinutes?: number;
     providerSlug?: string;
@@ -248,13 +253,23 @@ export async function makeDeliveryQuote(
     throw new Error(`No delivery_providers row for slug "${opts.providerSlug ?? "mock"}" — check supabase/seed.sql`);
   }
 
+  const providerCostCents = opts.providerCostCents ?? opts.priceCents ?? 5000;
+  const markupPercentageBps = opts.markupPercentageBps ?? 0;
+  // Same round-half-up-in-integer-cents formula as
+  // calculateDeliveryMarkup()/create_order()'s own commission rounding —
+  // a fixture computing this any other way could silently drift from
+  // what the real code under test actually produces.
+  const markupAmountCents = Math.round((providerCostCents * markupPercentageBps) / 10000);
+  const priceCents = providerCostCents + markupAmountCents;
+
   deliveryQuoteRefCounter += 1;
   const r = await db.query<{ id: string }>(
     `insert into public.delivery_quotes (
        requested_by, product_id, pickup_location_id, dropoff_location_id, provider_id,
-       service_level, price_cents, currency, eta_min_minutes, eta_max_minutes,
+       service_level, price_cents, provider_cost_cents, markup_percentage_bps, markup_amount_cents,
+       currency, eta_min_minutes, eta_max_minutes,
        provider_quote_ref, expires_at
-     ) values ($1, $2, $3, $4, $5, $6, $7, 'ZAR', 60, 120, $8, now() + ($9 || ' minutes')::interval)
+     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ZAR', 60, 120, $11, now() + ($12 || ' minutes')::interval)
      returning id`,
     [
       opts.buyerId,
@@ -263,7 +278,10 @@ export async function makeDeliveryQuote(
       opts.dropoffLocationId,
       provider.rows[0].id,
       opts.serviceLevel ?? "standard",
-      opts.priceCents ?? 5000,
+      priceCents,
+      providerCostCents,
+      markupPercentageBps,
+      markupAmountCents,
       `test-quote-ref-${deliveryQuoteRefCounter}`,
       String(opts.expiresInMinutes ?? 15),
     ],

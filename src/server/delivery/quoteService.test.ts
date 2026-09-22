@@ -14,6 +14,8 @@ function makeChain(result: QueuedResult) {
   chain.select = vi.fn(self);
   chain.eq = vi.fn(self);
   chain.insert = vi.fn(self);
+  chain.order = vi.fn(self);
+  chain.limit = vi.fn(self);
   chain.maybeSingle = vi.fn(() => Promise.resolve(result));
   chain.then = (resolve: (v: QueuedResult) => unknown) => Promise.resolve(result).then(resolve);
   return chain;
@@ -201,5 +203,74 @@ describe("fetchDeliveryQuotesForProduct", () => {
     const deliveryQuotesChain = mockAdmin.client.from.mock.results[deliveryQuotesIndex].value as { insert: ReturnType<typeof vi.fn> };
     const insertedRows = deliveryQuotesChain.insert.mock.calls[0][0];
     expect(insertedRows[0]).toMatchObject({ requested_by: "buyer-1", product_id: "product-1" });
+  });
+
+  describe("Phase 7C: delivery markup", () => {
+    function queueHappyPathThrough(markupSetting: { data: unknown; error: unknown } | null) {
+      mockSupabase.queue("products", { data: { id: "product-1", seller_type: "parent", seller_profile_id: "seller-1", business_id: null, delivery_available: true }, error: null });
+      mockAdmin.queue("profiles", { data: { location_id: "buyer-loc" }, error: null });
+      mockAdmin.queue("profiles", { data: { location_id: "seller-loc" }, error: null });
+      mockAdmin.queue("locations", { data: { latitude: -33.9, longitude: 18.4 }, error: null });
+      mockAdmin.queue("locations", { data: { latitude: -33.95, longitude: 18.45 }, error: null });
+      getAllDeliveryQuotesMock.mockResolvedValue([mockProviderQuotes[0]]); // providerSlug mock, priceCents 2500
+      if (markupSetting) mockAdmin.queue("delivery_markup_settings", markupSetting);
+      mockAdmin.queue("delivery_providers", { data: [{ id: "provider-1", slug: "mock", name: "Mock Delivery", is_active: true }], error: null });
+    }
+
+    function insertedRowsFor() {
+      const deliveryQuotesIndex = mockAdmin.fromCalls.lastIndexOf("delivery_quotes");
+      const chain = mockAdmin.client.from.mock.results[deliveryQuotesIndex].value as { insert: ReturnType<typeof vi.fn> };
+      return chain.insert.mock.calls[0][0] as Array<Record<string, unknown>>;
+    }
+
+    it("applies the current markup rate to the provider's raw quote price, and the buyer only ever sees the marked-up total", async () => {
+      queueHappyPathThrough({ data: { markup_percentage_bps: 2000 }, error: null }); // 20%
+      mockAdmin.queue("delivery_quotes", {
+        data: [{ id: "q1", service_level: "cheapest", price_cents: 3000, currency: "ZAR", eta_min_minutes: 180, eta_max_minutes: 300, expires_at: "2026-01-01T01:00:00Z", provider_id: "provider-1" }],
+        error: null,
+      });
+
+      const result = await fetchDeliveryQuotesForProduct(buyer, "product-1");
+      if (!result.ok) throw new Error("expected ok");
+      expect(result.quotes[0].priceCents).toBe(3000); // 2500 provider cost + 20% = 3000, never the raw 2500
+
+      const insertedRows = insertedRowsFor();
+      expect(insertedRows[0]).toMatchObject({
+        provider_cost_cents: 2500,
+        markup_percentage_bps: 2000,
+        markup_amount_cents: 500,
+        price_cents: 3000,
+      });
+    });
+
+    it("falls back to 0% markup if the settings table is somehow empty, rather than failing checkout", async () => {
+      queueHappyPathThrough(null); // no delivery_markup_settings row queued -> default {data:null,error:null}
+      mockAdmin.queue("delivery_quotes", {
+        data: [{ id: "q1", service_level: "cheapest", price_cents: 2500, currency: "ZAR", eta_min_minutes: 180, eta_max_minutes: 300, expires_at: "2026-01-01T01:00:00Z", provider_id: "provider-1" }],
+        error: null,
+      });
+
+      const result = await fetchDeliveryQuotesForProduct(buyer, "product-1");
+      if (!result.ok) throw new Error("expected ok");
+      expect(result.quotes[0].priceCents).toBe(2500);
+
+      const insertedRows = insertedRowsFor();
+      expect(insertedRows[0]).toMatchObject({ provider_cost_cents: 2500, markup_percentage_bps: 0, markup_amount_cents: 0 });
+    });
+
+    it("never includes provider_cost_cents, markup_percentage_bps, or markup_amount_cents in what's returned to the buyer", async () => {
+      queueHappyPathThrough({ data: { markup_percentage_bps: 1500 }, error: null });
+      mockAdmin.queue("delivery_quotes", {
+        data: [{ id: "q1", service_level: "cheapest", price_cents: 2875, currency: "ZAR", eta_min_minutes: 180, eta_max_minutes: 300, expires_at: "2026-01-01T01:00:00Z", provider_id: "provider-1" }],
+        error: null,
+      });
+
+      const result = await fetchDeliveryQuotesForProduct(buyer, "product-1");
+      if (!result.ok) throw new Error("expected ok");
+      const keys = Object.keys(result.quotes[0]);
+      expect(keys).not.toContain("providerCostCents");
+      expect(keys).not.toContain("markupPercentageBps");
+      expect(keys).not.toContain("markupAmountCents");
+    });
   });
 });

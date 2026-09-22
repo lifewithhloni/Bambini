@@ -3,6 +3,7 @@ import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAllDeliveryQuotes } from "./registry";
+import { calculateDeliveryMarkup } from "./calculateDeliveryMarkup";
 import type { GeoPoint, DeliveryServiceLevel } from "./types";
 
 export type BuyerDeliveryQuote = {
@@ -118,24 +119,57 @@ export async function fetchDeliveryQuotesForProduct(user: User, productId: strin
     return { ok: false, error: "No delivery options are available for this listing right now." };
   }
 
-  const rows = bookable.map(({ quote, providerRow }) => ({
-    requested_by: user.id,
-    product_id: productId,
-    pickup_location_id: sellerLocationId,
-    dropoff_location_id: buyerLocationId,
-    provider_id: providerRow.id,
-    service_level: quote.serviceLevel,
-    price_cents: quote.priceCents,
-    currency: quote.currency,
-    eta_min_minutes: quote.etaMinMinutes,
-    eta_max_minutes: quote.etaMaxMinutes,
-    provider_quote_ref: quote.providerQuoteRef,
-    // Internal-only (never selected back out to the browser — see
-    // BuyerDeliveryQuote above) audit record of exactly what the
-    // provider returned.
-    raw_response: quote,
-    expires_at: quote.expiresAt.toISOString(),
-  }));
+  // Phase 7C: the current admin-configured markup rate, read ONCE per
+  // quote fetch and baked into every returned quote's own
+  // markup_percentage_bps — never re-read or recalculated later. This is
+  // what makes "an existing order keeps the rate that was in effect when
+  // its quote was fetched, even after the admin changes the global rate"
+  // true: create_order() only ever copies these already-computed values
+  // off the quote row, it never looks the setting up itself. See
+  // delivery_markup_settings' own migration comment for why this is an
+  // append-only history, mirroring commission_rates exactly.
+  const { data: markupSetting } = await admin
+    .from("delivery_markup_settings")
+    .select("markup_percentage_bps")
+    .order("effective_from", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  // Falls back to 0% only if the settings table were somehow empty
+  // (never happens in practice — a default row is seeded directly in
+  // the migration that creates the table) rather than failing checkout
+  // entirely over a missing admin config row.
+  const markupPercentageBps = markupSetting?.markup_percentage_bps ?? 0;
+
+  const rows = bookable.map(({ quote, providerRow }) => {
+    // quote.priceCents here is the PROVIDER's own raw cost — nothing
+    // above this line has touched it. The buyer never sees this number;
+    // BuyerDeliveryQuote (below) only ever carries the marked-up
+    // buyerFeeCents.
+    const markup = calculateDeliveryMarkup(quote.priceCents, markupPercentageBps);
+    return {
+      requested_by: user.id,
+      product_id: productId,
+      pickup_location_id: sellerLocationId,
+      dropoff_location_id: buyerLocationId,
+      provider_id: providerRow.id,
+      service_level: quote.serviceLevel,
+      // The buyer-facing price — provider cost + markup, never the raw
+      // provider quote.
+      price_cents: markup.buyerFeeCents,
+      provider_cost_cents: markup.providerCostCents,
+      markup_percentage_bps: markup.markupPercentageBps,
+      markup_amount_cents: markup.markupAmountCents,
+      currency: quote.currency,
+      eta_min_minutes: quote.etaMinMinutes,
+      eta_max_minutes: quote.etaMaxMinutes,
+      provider_quote_ref: quote.providerQuoteRef,
+      // Internal-only (never selected back out to the browser — see
+      // BuyerDeliveryQuote above) audit record of exactly what the
+      // provider returned, including its own (unmarked-up) price.
+      raw_response: quote,
+      expires_at: quote.expiresAt.toISOString(),
+    };
+  });
 
   const { data: inserted, error: insertError } = await admin
     .from("delivery_quotes")
