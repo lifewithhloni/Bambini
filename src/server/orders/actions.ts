@@ -44,11 +44,29 @@ export async function createOrder(
     return { error: "Choose a payment method." };
   }
 
+  // Phase 7A: only ever a quote id the buyer's own PlaceOrderForm
+  // received back from fetchDeliveryQuotes() — never a price, never
+  // anything else about the quote. create_order() re-validates this id
+  // against requested_by/product_id/pickup/dropoff/expiry server-side
+  // regardless of what's sent (see
+  // 20260930090000_delivery_quoting_booking.sql); this is just
+  // presence/shape validation for a friendly error before hitting the
+  // database.
+  let deliveryQuoteId: string | null = null;
+  if (parsedFulfilment.data === "delivery") {
+    const raw = formData.get("deliveryQuoteId");
+    if (typeof raw !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+      return { error: "Select a delivery option before checking out." };
+    }
+    deliveryQuoteId = raw;
+  }
+
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("create_order", {
     p_product_id: productId,
     p_fulfilment_type: parsedFulfilment.data,
     p_payment_method: parsedPaymentMethod.data,
+    p_delivery_quote_id: deliveryQuoteId,
   });
 
   if (error || !data || data.length === 0) {
@@ -58,6 +76,13 @@ export async function createOrder(
     // just a dead-end error string.
     if (error?.message && /account verification required/i.test(error.message)) {
       return { error: "Account verification required before purchasing.", verificationRequired: true };
+    }
+    // Phase 7A: create_order()'s own quote-revalidation messages are
+    // already buyer-safe (see the migration) — surfaced verbatim so the
+    // "refresh delivery options" instruction is actually visible,
+    // rather than collapsed into the generic fallback below.
+    if (error?.message && /delivery quote|delivery option/i.test(error.message)) {
+      return { error: error.message };
     }
     return { error: humanizeOrderError(error?.message) };
   }

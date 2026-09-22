@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
-import { asAnon, asUser, bootAndMigrate, makeUser } from "./harness";
+import { asAnon, asUser, bootAndMigrate, makeUser, makeDeliveryQuote } from "./harness";
 
 /**
  * Phase 4C: cash-on-collection + collection confirmation (both payment
@@ -35,11 +35,17 @@ describe("cash collection transactions", () => {
   async function makeProduct(
     seller: string,
     title: string,
-    overrides: { status?: "draft" | "published" | "archived"; price_cents?: number; collection_available?: boolean; delivery_available?: boolean } = {},
+    overrides: {
+      status?: "draft" | "published" | "archived";
+      price_cents?: number;
+      collection_available?: boolean;
+      delivery_available?: boolean;
+      pickup_location_id?: string;
+    } = {},
   ) {
     const r = await db.query<{ id: string }>(
-      `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, status, collection_available, delivery_available)
-       values ('parent', $1, $2, $3, 'good', $4, $5, $6, $7)
+      `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, status, collection_available, delivery_available, pickup_location_id)
+       values ('parent', $1, $2, $3, 'good', $4, $5, $6, $7, $8)
        returning id`,
       [
         seller,
@@ -49,6 +55,7 @@ describe("cash collection transactions", () => {
         overrides.status ?? "published",
         overrides.collection_available ?? true,
         overrides.delivery_available ?? true,
+        overrides.pickup_location_id ?? null,
       ],
     );
     return r.rows[0].id;
@@ -103,7 +110,7 @@ describe("cash collection transactions", () => {
       ).rejects.toThrow(/orders_cash_requires_collection/i);
     });
 
-    it("3. online + delivery still works exactly as before (regression)", async () => {
+    it("3. online + delivery still works exactly as before (regression), now priced from a real delivery quote", async () => {
       const seller = await makeUser(db, "Online Delivery Seller");
       const buyer = await makeUser(db, "Online Delivery Buyer");
       await db.query(
@@ -112,9 +119,20 @@ describe("cash collection transactions", () => {
       );
       const loc = await db.query<{ id: string }>(`select id from public.locations where created_by = $1`, [buyer]);
       await db.query(`update public.profiles set location_id = $1 where id = $2`, [loc.rows[0].id, buyer]);
-      const productId = await makeProduct(seller, "Online Delivery Toy");
+
+      const sellerLoc = await db.query<{ id: string }>(
+        `insert into public.locations (created_by, latitude, longitude) values ($1, -33.95, 18.45) returning id`,
+        [seller],
+      );
+      const productId = await makeProduct(seller, "Online Delivery Toy", { pickup_location_id: sellerLoc.rows[0].id });
+      const quoteId = await makeDeliveryQuote(db, {
+        buyerId: buyer,
+        productId,
+        pickupLocationId: sellerLoc.rows[0].id,
+        dropoffLocationId: loc.rows[0].id,
+      });
       const r = await asUser(db, buyer, () =>
-        db.query<{ order_id: string }>(`select * from public.create_order($1, 'delivery', 'online')`, [productId]),
+        db.query<{ order_id: string }>(`select * from public.create_order($1, 'delivery', 'online', $2)`, [productId, quoteId]),
       );
       expect(r.rows).toHaveLength(1);
     });
@@ -385,9 +403,20 @@ describe("cash collection transactions", () => {
       await db.query(`insert into public.locations (created_by, latitude, longitude) values ($1, -33.9, 18.4)`, [buyer]);
       const loc = await db.query<{ id: string }>(`select id from public.locations where created_by = $1`, [buyer]);
       await db.query(`update public.profiles set location_id = $1 where id = $2`, [loc.rows[0].id, buyer]);
-      const productId = await makeProduct(seller, "Shape Toy F");
+
+      const sellerLoc = await db.query<{ id: string }>(
+        `insert into public.locations (created_by, latitude, longitude) values ($1, -33.95, 18.45) returning id`,
+        [seller],
+      );
+      const productId = await makeProduct(seller, "Shape Toy F", { pickup_location_id: sellerLoc.rows[0].id });
+      const quoteId = await makeDeliveryQuote(db, {
+        buyerId: buyer,
+        productId,
+        pickupLocationId: sellerLoc.rows[0].id,
+        dropoffLocationId: loc.rows[0].id,
+      });
       const created = await asUser(db, buyer, () =>
-        db.query<{ order_id: string }>(`select * from public.create_order($1, 'delivery', 'online')`, [productId]),
+        db.query<{ order_id: string }>(`select * from public.create_order($1, 'delivery', 'online', $2)`, [productId, quoteId]),
       );
       await db.query("reset role");
       const cc = await db.query(`select id from public.collection_confirmations where order_id = $1`, [created.rows[0].order_id]);
@@ -419,7 +448,14 @@ describe("cash collection transactions", () => {
       }
       // proargnames also includes the RETURNS TABLE output columns
       // (order_id, order_reference) as implicit OUT parameters.
-      expect(argNames).toEqual(["p_product_id", "p_fulfilment_type", "p_payment_method", "order_id", "order_reference"]);
+      expect(argNames).toEqual([
+        "p_product_id",
+        "p_fulfilment_type",
+        "p_payment_method",
+        "p_delivery_quote_id",
+        "order_id",
+        "order_reference",
+      ]);
     });
   });
 

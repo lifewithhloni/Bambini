@@ -31,4 +31,23 @@ describe("MockDeliveryProvider", () => {
     const provider = new MockDeliveryProvider();
     await expect(provider.getStatus("unknown")).resolves.toBe("failed");
   });
+
+  it("cancels a booked delivery and reflects the cancellation in subsequent status checks", async () => {
+    const provider = new MockDeliveryProvider();
+    const booked = await provider.bookDelivery({
+      providerQuoteRef: "quote-2",
+      pickup: capeTown,
+      dropoff: nearbySuburb,
+      orderId: "order-2",
+    });
+
+    const cancelled = await provider.cancelDelivery(booked.providerTrackingRef);
+    expect(cancelled).toEqual({ status: "cancelled", wasCancelled: true });
+    await expect(provider.getStatus(booked.providerTrackingRef)).resolves.toBe("cancelled");
+  });
+
+  it("reports cancelling an unknown tracking ref as a no-op, not an error", async () => {
+    const provider = new MockDeliveryProvider();
+    await expect(provider.cancelDelivery("unknown")).resolves.toEqual({ status: "failed", wasCancelled: false });
+  });
 });

@@ -17,6 +17,11 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: vi.fn(() => ({ rpc: rpcMock })),
 }));
 
+const bookDeliveryForOrderMock = vi.fn();
+vi.mock("@/server/delivery/bookingService", () => ({
+  bookDeliveryForOrder: bookDeliveryForOrderMock,
+}));
+
 const { POST } = await import("./route");
 
 function makeRequest(body: string, headers: Record<string, string> = {}) {
@@ -39,6 +44,8 @@ beforeEach(() => {
   verifyWebhookMock.mockReset();
   isValidPayFastSenderHostMock.mockReset();
   rpcMock.mockReset();
+  bookDeliveryForOrderMock.mockReset();
+  bookDeliveryForOrderMock.mockResolvedValue(undefined);
   isValidPayFastSenderHostMock.mockReturnValue(true);
 });
 
@@ -135,5 +142,43 @@ describe("POST /api/payments/payfast/webhook", () => {
     expect(response.status).toBe(500);
     const body = await response.json();
     expect(JSON.stringify(body)).not.toMatch(/PAYFAST_MERCHANT_ID/);
+  });
+
+  describe("Phase 7A: delivery booking trigger", () => {
+    it("16. books delivery after a 'confirmed' outcome", async () => {
+      verifyWebhookMock.mockResolvedValue(validResult);
+      rpcMock.mockResolvedValue({ data: [{ outcome: "confirmed" }], error: null });
+      await POST(makeRequest("..."));
+      expect(bookDeliveryForOrderMock).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+    });
+
+    it("17. also attempts booking on a 'duplicate_ignored' outcome — the retry safety net for a crash between reservation and booking", async () => {
+      verifyWebhookMock.mockResolvedValue(validResult);
+      rpcMock.mockResolvedValue({ data: [{ outcome: "duplicate_ignored" }], error: null });
+      await POST(makeRequest("..."));
+      expect(bookDeliveryForOrderMock).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+    });
+
+    it("never attempts booking for a 'failed_recorded' outcome — nothing was paid", async () => {
+      verifyWebhookMock.mockResolvedValue({ ...validResult, status: "failed" });
+      rpcMock.mockResolvedValue({ data: [{ outcome: "failed_recorded" }], error: null });
+      await POST(makeRequest("..."));
+      expect(bookDeliveryForOrderMock).not.toHaveBeenCalled();
+    });
+
+    it("never attempts booking for a rejected outcome", async () => {
+      verifyWebhookMock.mockResolvedValue(validResult);
+      rpcMock.mockResolvedValue({ data: [{ outcome: "rejected_amount_mismatch" }], error: null });
+      await POST(makeRequest("..."));
+      expect(bookDeliveryForOrderMock).not.toHaveBeenCalled();
+    });
+
+    it("still returns 200 for a 'confirmed' outcome even if booking itself throws — a booking problem is never surfaced as a payment processing failure to PayFast", async () => {
+      verifyWebhookMock.mockResolvedValue(validResult);
+      rpcMock.mockResolvedValue({ data: [{ outcome: "confirmed" }], error: null });
+      bookDeliveryForOrderMock.mockRejectedValue(new Error("provider unreachable"));
+      const response = await POST(makeRequest("..."));
+      expect(response.status).toBe(200);
+    });
   });
 });

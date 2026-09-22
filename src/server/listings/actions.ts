@@ -15,22 +15,32 @@ export type ListingActionState = { error: string } | null;
  * A listing's pickup_location_id is never taken from the submitted
  * form — it's always resolved server-side from the seller's own saved
  * location (profiles.location_id, set via /account/location), and only
- * when collection is actually offered (a delivery-only listing has no
- * pickup point to publish). This is what "connect listings to pickup
- * location" means in practice (see DECISIONS.md): one location per
- * seller, referenced by every listing that offers collection, never a
- * per-listing address re-entered each time. The RLS WITH CHECK added in
- * 20260923090000_nearby_search.sql is the actual boundary preventing a
- * listing from ever referencing another seller's location — this
- * function relying on the seller's own profile row is defense in depth
- * on top of that, not a substitute for it.
+ * when the listing needs one at all (neither collection nor delivery
+ * offered has no pickup point to publish). This is what "connect
+ * listings to pickup location" means in practice (see DECISIONS.md):
+ * one location per seller, referenced by every listing that needs a
+ * physical origin point, never a per-listing address re-entered each
+ * time. The RLS WITH CHECK added in 20260923090000_nearby_search.sql is
+ * the actual boundary preventing a listing from ever referencing
+ * another seller's location — this function relying on the seller's
+ * own profile row is defense in depth on top of that, not a substitute
+ * for it.
+ *
+ * Phase 7A: gated on collection OR delivery, not collection alone — a
+ * delivery-only listing still needs a real pickup point for the courier
+ * to collect from and for the delivery quote service to compute a
+ * distance-based price (getAllDeliveryQuotes() needs both a pickup and
+ * a dropoff GeoPoint). Before this phase nothing ever read
+ * pickup_location_id for a delivery order (delivery_fee_cents was
+ * hardcoded to 0), so the gap was invisible; it isn't invisible once
+ * quoting is real.
  */
 async function resolveOwnPickupLocationId(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
-  collectionAvailable: boolean,
+  needsPickupLocation: boolean,
 ): Promise<string | null> {
-  if (!collectionAvailable) return null;
+  if (!needsPickupLocation) return null;
   const { data } = await supabase.from("profiles").select("location_id").eq("id", userId).maybeSingle();
   return data?.location_id ?? null;
 }
@@ -44,14 +54,15 @@ async function resolveOwnPickupLocationId(
  * individual happens to be managing it. Read-only lookup; the actual
  * authorization for *which* business_id this listing may reference is
  * RLS's own products_insert_owner policy (is_business_member()), not
- * this function.
+ * this function. Phase 7A: same collection-OR-delivery gate as
+ * resolveOwnPickupLocationId() above, for the same reason.
  */
 async function resolveBusinessPickupLocationId(
   supabase: Awaited<ReturnType<typeof createClient>>,
   businessId: string,
-  collectionAvailable: boolean,
+  needsPickupLocation: boolean,
 ): Promise<string | null> {
-  if (!collectionAvailable) return null;
+  if (!needsPickupLocation) return null;
   const { data } = await supabase.from("businesses").select("location_id").eq("id", businessId).maybeSingle();
   return data?.location_id ?? null;
 }
@@ -147,11 +158,14 @@ export async function createListing(_prev: ListingActionState, formData: FormDat
   // Phase 6: a business-owned listing now resolves its pickup point from
   // the business's own saved location (businesses.location_id), the
   // same way a parent seller's listing resolves from their own profile.
+  // Phase 7A: needed whenever collection OR delivery is offered — see
+  // resolveOwnPickupLocationId()'s own doc comment.
+  const needsPickupLocation = parsed.data.collectionAvailable || parsed.data.deliveryAvailable;
   const pickupLocationId =
     parsed.data.sellerType === "parent"
-      ? await resolveOwnPickupLocationId(supabase, user.id, parsed.data.collectionAvailable)
+      ? await resolveOwnPickupLocationId(supabase, user.id, needsPickupLocation)
       : parsed.data.businessId
-        ? await resolveBusinessPickupLocationId(supabase, parsed.data.businessId, parsed.data.collectionAvailable)
+        ? await resolveBusinessPickupLocationId(supabase, parsed.data.businessId, needsPickupLocation)
         : null;
 
   const { data: product, error } = await supabase
@@ -231,11 +245,12 @@ export async function updateListing(
   if (existing.status === "sold") {
     return { error: "This listing has been sold and can no longer be edited." };
   }
+  const needsPickupLocation = parsed.data.collectionAvailable || parsed.data.deliveryAvailable;
   const pickupLocationId =
     existing.seller_type === "parent"
-      ? await resolveOwnPickupLocationId(supabase, user.id, parsed.data.collectionAvailable)
+      ? await resolveOwnPickupLocationId(supabase, user.id, needsPickupLocation)
       : existing.business_id
-        ? await resolveBusinessPickupLocationId(supabase, existing.business_id, parsed.data.collectionAvailable)
+        ? await resolveBusinessPickupLocationId(supabase, existing.business_id, needsPickupLocation)
         : null;
 
   const { data: updated, error } = await supabase

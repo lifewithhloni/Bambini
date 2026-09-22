@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getDeliveryTracking } from "@/server/delivery/trackingService";
 
 export type OrderDetail = {
   id: string;
@@ -13,6 +14,10 @@ export type OrderDetail = {
   commission_settlement_status: string | null;
   fulfilment_type: string;
   subtotal_cents: number;
+  // Phase 7A: always 0 for collection (unchanged); derived from the
+  // buyer's selected delivery quote for a delivery order — see
+  // create_order() in 20260930090000_delivery_quoting_booking.sql.
+  delivery_fee_cents: number;
   total_cents: number;
   commission_rate_bps: number;
   commission_amount_cents: number;
@@ -31,6 +36,10 @@ export type OrderDetail = {
   buyerName: string | null;
   sellerName: string | null;
   pickupLocation: { suburb: string | null; city: string | null } | null;
+  // Phase 7A: buyer/seller-safe tracking (see trackingService.ts) — null
+  // for a collection order, or a delivery order that hasn't been booked
+  // yet (e.g. payment still pending).
+  deliveryTracking: { status: string; label: string } | null;
 };
 
 /**
@@ -51,12 +60,14 @@ export async function getOrder(orderId: string): Promise<OrderDetail | null> {
   const { data: order, error } = await supabase
     .from("orders")
     .select(
-      "id, order_reference, status, fulfilment_type, subtotal_cents, total_cents, commission_rate_bps, commission_amount_cents, currency, created_at, buyer_id, seller_profile_id, business_id, seller_type",
+      "id, order_reference, status, fulfilment_type, subtotal_cents, delivery_fee_cents, total_cents, commission_rate_bps, commission_amount_cents, currency, created_at, buyer_id, seller_profile_id, business_id, seller_type",
     )
     .eq("id", orderId)
     .maybeSingle();
 
   if (error || !order) return null;
+
+  const deliveryTracking = order.fulfilment_type === "delivery" ? await getDeliveryTracking(order.id) : null;
 
   const [{ data: orderItem }, { data: payment }, { data: commission }, { data: buyerProfile }] = await Promise.all([
     supabase
@@ -103,6 +114,7 @@ export async function getOrder(orderId: string): Promise<OrderDetail | null> {
     commission_settlement_status: commission?.settlement_status ?? null,
     fulfilment_type: order.fulfilment_type,
     subtotal_cents: order.subtotal_cents,
+    delivery_fee_cents: order.delivery_fee_cents,
     total_cents: order.total_cents,
     commission_rate_bps: order.commission_rate_bps,
     commission_amount_cents: order.commission_amount_cents,
@@ -123,5 +135,6 @@ export async function getOrder(orderId: string): Promise<OrderDetail | null> {
     buyerName: buyerProfile?.full_name ?? null,
     sellerName,
     pickupLocation,
+    deliveryTracking,
   };
 }

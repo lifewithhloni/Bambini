@@ -212,3 +212,61 @@ export async function makeUser(db: PGlite, fullName: string, opts: { verified?: 
 
   return id;
 }
+
+let deliveryQuoteRefCounter = 0;
+
+/**
+ * Phase 7A: a fixture row in delivery_quotes, inserted directly (as the
+ * PGlite bootstrap role, outside RLS — the same "raw fixture insert"
+ * pattern tests/db/rls.test.ts already uses for orders/payments, since
+ * delivery_quotes has no authenticated INSERT policy at all by design —
+ * see 20260930090000_delivery_quoting_booking.sql). Mirrors exactly what
+ * the real quote service (src/server/delivery/quoteService.ts) would
+ * have persisted: requested_by/product_id set (Phase 7A's ownership +
+ * replay-prevention columns), a real provider_id resolved from the
+ * seeded 'mock' delivery_providers row (see supabase/seed.sql), and a
+ * future expires_at unless the caller deliberately wants an expired one.
+ */
+export async function makeDeliveryQuote(
+  db: PGlite,
+  opts: {
+    buyerId: string;
+    productId: string;
+    pickupLocationId: string;
+    dropoffLocationId: string;
+    priceCents?: number;
+    serviceLevel?: "cheapest" | "standard" | "express";
+    expiresInMinutes?: number;
+    providerSlug?: string;
+  },
+): Promise<string> {
+  const provider = await db.query<{ id: string }>(
+    `select id from public.delivery_providers where slug = $1 limit 1`,
+    [opts.providerSlug ?? "mock"],
+  );
+  if (provider.rows.length === 0) {
+    throw new Error(`No delivery_providers row for slug "${opts.providerSlug ?? "mock"}" — check supabase/seed.sql`);
+  }
+
+  deliveryQuoteRefCounter += 1;
+  const r = await db.query<{ id: string }>(
+    `insert into public.delivery_quotes (
+       requested_by, product_id, pickup_location_id, dropoff_location_id, provider_id,
+       service_level, price_cents, currency, eta_min_minutes, eta_max_minutes,
+       provider_quote_ref, expires_at
+     ) values ($1, $2, $3, $4, $5, $6, $7, 'ZAR', 60, 120, $8, now() + ($9 || ' minutes')::interval)
+     returning id`,
+    [
+      opts.buyerId,
+      opts.productId,
+      opts.pickupLocationId,
+      opts.dropoffLocationId,
+      provider.rows[0].id,
+      opts.serviceLevel ?? "standard",
+      opts.priceCents ?? 5000,
+      `test-quote-ref-${deliveryQuoteRefCounter}`,
+      String(opts.expiresInMinutes ?? 15),
+    ],
+  );
+  return r.rows[0].id;
+}

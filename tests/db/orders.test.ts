@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
-import { asAnon, asUser, bootAndMigrate, makeUser } from "./harness";
+import { asAnon, asUser, bootAndMigrate, makeUser, makeDeliveryQuote } from "./harness";
 
 /**
  * Phase 4A: create_order() — exercised against the real migration SQL
@@ -25,11 +25,12 @@ describe("create_order()", () => {
       price_cents?: number;
       collection_available?: boolean;
       delivery_available?: boolean;
+      pickup_location_id?: string;
     } = {},
   ) {
     const r = await db.query<{ id: string }>(
-      `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, status, collection_available, delivery_available)
-       values ('parent', $1, $2, $3, 'good', $4, $5, $6, $7)
+      `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, status, collection_available, delivery_available, pickup_location_id)
+       values ('parent', $1, $2, $3, 'good', $4, $5, $6, $7, $8)
        returning id`,
       [
         seller,
@@ -39,6 +40,7 @@ describe("create_order()", () => {
         overrides.status ?? "published",
         overrides.collection_available ?? true,
         overrides.delivery_available ?? true,
+        overrides.pickup_location_id ?? null,
       ],
     );
     return r.rows[0].id;
@@ -424,23 +426,41 @@ describe("create_order()", () => {
       });
     });
 
-    it("delivery succeeds and snapshots the buyer's saved location once one exists", async () => {
-      const loc = await db.query<{ id: string }>(
+    it("delivery succeeds and snapshots the buyer's saved location once one exists, pricing the order from the delivery quote", async () => {
+      const buyerLoc = await db.query<{ id: string }>(
         `insert into public.locations (created_by, latitude, longitude, suburb, city) values ($1, -33.9, 18.4, 'Gardens', 'Cape Town') returning id`,
         [bob],
       );
-      await db.query(`update public.profiles set location_id = $1 where id = $2`, [loc.rows[0].id, bob]);
+      await db.query(`update public.profiles set location_id = $1 where id = $2`, [buyerLoc.rows[0].id, bob]);
 
-      const productId = await makeProduct(alice, "Delivery With Location Stroller");
+      const sellerLoc = await db.query<{ id: string }>(
+        `insert into public.locations (created_by, latitude, longitude, suburb, city) values ($1, -33.95, 18.45, 'Woodstock', 'Cape Town') returning id`,
+        [alice],
+      );
+
+      const productId = await makeProduct(alice, "Delivery With Location Stroller", { pickup_location_id: sellerLoc.rows[0].id });
+      const quoteId = await makeDeliveryQuote(db, {
+        buyerId: bob,
+        productId,
+        pickupLocationId: sellerLoc.rows[0].id,
+        dropoffLocationId: buyerLoc.rows[0].id,
+        priceCents: 4500,
+      });
+
       const created = await asUser(db, bob, () =>
-        db.query<{ order_id: string }>(`select * from public.create_order($1, 'delivery')`, [productId]),
+        db.query<{ order_id: string }>(`select * from public.create_order($1, 'delivery', 'online', $2)`, [productId, quoteId]),
       );
       await db.query("reset role");
-      const order = await db.query<{ delivery_location_id: string }>(
-        `select delivery_location_id from public.orders where id = $1`,
+      const order = await db.query<{ delivery_location_id: string; delivery_fee_cents: string; total_cents: string }>(
+        `select delivery_location_id, delivery_fee_cents, total_cents from public.orders where id = $1`,
         [created.rows[0].order_id],
       );
-      expect(order.rows[0].delivery_location_id).toBe(loc.rows[0].id);
+      expect(order.rows[0].delivery_location_id).toBe(buyerLoc.rows[0].id);
+      expect(Number(order.rows[0].delivery_fee_cents)).toBe(4500);
+      expect(Number(order.rows[0].total_cents)).toBe(50000 + 4500);
+
+      const quote = await db.query<{ order_id: string }>(`select order_id from public.delivery_quotes where id = $1`, [quoteId]);
+      expect(quote.rows[0].order_id).toBe(created.rows[0].order_id);
     });
   });
 

@@ -52,7 +52,7 @@ describe("createOrder", () => {
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
-  it("calls create_order with only the product id, fulfilment type, and payment method — no price, seller, buyer, or commission field", async () => {
+  it("calls create_order with only the product id, fulfilment type, payment method, and delivery quote id — no price, seller, buyer, or commission field", async () => {
     rpcMock.mockResolvedValue({ data: [{ order_id: "order-1", order_reference: "BMB-ABC123" }], error: null });
 
     await expect(createOrder("product-1", null, formData({ fulfilmentType: "collection" }))).rejects.toThrow(RedirectSignal);
@@ -61,18 +61,38 @@ describe("createOrder", () => {
       p_product_id: "product-1",
       p_fulfilment_type: "collection",
       p_payment_method: "online",
+      p_delivery_quote_id: null,
     });
     const args = rpcMock.mock.calls[0][1];
-    expect(Object.keys(args).sort()).toEqual(["p_fulfilment_type", "p_payment_method", "p_product_id"]);
+    expect(Object.keys(args).sort()).toEqual(["p_delivery_quote_id", "p_fulfilment_type", "p_payment_method", "p_product_id"]);
   });
 
-  it("defaults to 'online' when no paymentMethod field is present at all (e.g. delivery checkout, which never renders the cash option)", async () => {
+  it("Phase 7A: rejects a delivery submission with no delivery quote id, before ever calling the database", async () => {
+    const result = await createOrder("product-1", null, formData({ fulfilmentType: "delivery" }));
+    expect(result).toEqual({ error: expect.any(String) });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("Phase 7A: rejects a delivery submission with a malformed (non-uuid) delivery quote id", async () => {
+    const result = await createOrder("product-1", null, formData({ fulfilmentType: "delivery", deliveryQuoteId: "not-a-uuid" }));
+    expect(result).toEqual({ error: expect.any(String) });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("defaults to 'online' when no paymentMethod field is present at all, and passes the selected delivery quote id through", async () => {
     rpcMock.mockResolvedValue({ data: [{ order_id: "order-1", order_reference: "BMB-ABC123" }], error: null });
-    await expect(createOrder("product-1", null, formData({ fulfilmentType: "delivery" }))).rejects.toThrow(RedirectSignal);
+    await expect(
+      createOrder(
+        "product-1",
+        null,
+        formData({ fulfilmentType: "delivery", deliveryQuoteId: "11111111-1111-4111-8111-111111111111" }),
+      ),
+    ).rejects.toThrow(RedirectSignal);
     expect(rpcMock).toHaveBeenCalledWith("create_order", {
       p_product_id: "product-1",
       p_fulfilment_type: "delivery",
       p_payment_method: "online",
+      p_delivery_quote_id: "11111111-1111-4111-8111-111111111111",
     });
   });
 
@@ -89,13 +109,20 @@ describe("createOrder", () => {
       p_product_id: "product-1",
       p_fulfilment_type: "collection",
       p_payment_method: "cash",
+      p_delivery_quote_id: null,
     });
   });
 
   it("redirects to the new order's payment step on success for online orders (Phase 4B: an order isn't done until it's paid — see actions.ts)", async () => {
     rpcMock.mockResolvedValue({ data: [{ order_id: "order-42", order_reference: "BMB-XYZ789" }], error: null });
 
-    await expect(createOrder("product-1", null, formData({ fulfilmentType: "delivery" }))).rejects.toThrow(RedirectSignal);
+    await expect(
+      createOrder(
+        "product-1",
+        null,
+        formData({ fulfilmentType: "delivery", deliveryQuoteId: "11111111-1111-4111-8111-111111111111" }),
+      ),
+    ).rejects.toThrow(RedirectSignal);
 
     expect(redirectMock).toHaveBeenCalledWith("/orders/order-42/pay");
   });

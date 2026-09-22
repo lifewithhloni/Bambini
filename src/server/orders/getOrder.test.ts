@@ -38,6 +38,11 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => mockSupabase.client),
 }));
 
+const getDeliveryTrackingMock = vi.fn();
+vi.mock("@/server/delivery/trackingService", () => ({
+  getDeliveryTracking: getDeliveryTrackingMock,
+}));
+
 let mockSupabase: ReturnType<typeof makeSupabaseMock>;
 
 const { getOrder } = await import("./getOrder");
@@ -48,6 +53,7 @@ const baseOrder = {
   status: "pending_payment",
   fulfilment_type: "collection",
   subtotal_cents: 50000,
+  delivery_fee_cents: 0,
   total_cents: 50000,
   commission_rate_bps: 1200,
   commission_amount_cents: 6000,
@@ -61,6 +67,7 @@ const baseOrder = {
 
 beforeEach(() => {
   mockSupabase = makeSupabaseMock();
+  getDeliveryTrackingMock.mockReset();
 });
 
 describe("getOrder", () => {
@@ -100,6 +107,7 @@ describe("getOrder", () => {
       commission_settlement_status: "collected_via_payment",
       fulfilment_type: "collection",
       subtotal_cents: 50000,
+      delivery_fee_cents: 0,
       total_cents: 50000,
       commission_rate_bps: 1200,
       commission_amount_cents: 6000,
@@ -118,7 +126,25 @@ describe("getOrder", () => {
       buyerName: "Bob Buyer",
       sellerName: "Alice Seller",
       pickupLocation: { suburb: "Gardens", city: "Cape Town" },
+      deliveryTracking: null,
     });
+    expect(getDeliveryTrackingMock).not.toHaveBeenCalled();
+  });
+
+  it("Phase 7A: fetches buyer/seller-safe delivery tracking for a delivery order, never for a collection order", async () => {
+    mockSupabase.queue("orders", { data: { ...baseOrder, fulfilment_type: "delivery", delivery_fee_cents: 4500, total_cents: 54500 }, error: null });
+    mockSupabase.queue("order_items", { data: null, error: null });
+    mockSupabase.queue("payments", { data: { status: "paid", method: "online" }, error: null });
+    mockSupabase.queue("commissions", { data: { settlement_status: "collected_via_payment" }, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Alice Seller" }, error: null });
+    getDeliveryTrackingMock.mockResolvedValue({ status: "booked", label: "Booking confirmed" });
+
+    const result = await getOrder("order-1");
+
+    expect(getDeliveryTrackingMock).toHaveBeenCalledWith("order-1");
+    expect(result?.deliveryTracking).toEqual({ status: "booked", label: "Booking confirmed" });
+    expect(result?.delivery_fee_cents).toBe(4500);
   });
 
   it("resolves seller name from businesses_public for a business-type order", async () => {

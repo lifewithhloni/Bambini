@@ -149,7 +149,8 @@ describe("createListing", () => {
     expect(insertedPayload.pickup_location_id).toBe("loc-1");
   });
 
-  it("never attaches a pickup location when collection isn't offered, even if the seller has one saved", async () => {
+  it("attaches the seller's own saved pickup location for a delivery-only listing too (Phase 7A: a courier still needs a real pickup point)", async () => {
+    mockSupabase.queue("profiles", { data: { location_id: "loc-1" }, error: null });
     mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
     await expect(
       createListing(
@@ -158,8 +159,7 @@ describe("createListing", () => {
       ),
     ).rejects.toThrow(RedirectSignal);
     const insertedPayload = (mockSupabase.chains.products[0].insert as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(insertedPayload.pickup_location_id).toBeNull();
-    expect(mockSupabase.fromCalls).not.toContain("profiles");
+    expect(insertedPayload.pickup_location_id).toBe("loc-1");
   });
 
   it("never resolves a pickup location for a business listing (no business location workflow yet)", async () => {
@@ -277,8 +277,9 @@ describe("updateListing", () => {
     expect(payload.pickup_location_id).toBe("loc-1");
   });
 
-  it("clears pickup_location_id when collection is toggled off, even if the seller has a saved location", async () => {
+  it("keeps resolving pickup_location_id when collection is toggled off but delivery stays on (Phase 7A)", async () => {
     mockSupabase.queue("products", { data: { seller_type: "parent" }, error: null });
+    mockSupabase.queue("profiles", { data: { location_id: "loc-1" }, error: null });
     mockSupabase.queue("products", { data: { id: "listing-1" }, error: null });
     await updateListing(
       "listing-1",
@@ -286,8 +287,7 @@ describe("updateListing", () => {
       formData({ ...validListingFields, collectionAvailable: undefined, deliveryAvailable: "on" }),
     );
     const payload = (mockSupabase.chains.products[1].update as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(payload.pickup_location_id).toBeNull();
-    expect(mockSupabase.fromCalls).not.toContain("profiles");
+    expect(payload.pickup_location_id).toBe("loc-1");
   });
 
   it("never resolves a pickup location for a business listing (no business location workflow yet)", async () => {

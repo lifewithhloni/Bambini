@@ -71,10 +71,22 @@ export function OrderDetailView({
             </span>
           </div>
         )}
+        {order.fulfilment_type === "delivery" && order.deliveryTracking && (
+          <div className="flex items-center justify-between">
+            <span className="text-brand-muted">Delivery status</span>
+            <span className="text-brand-ink">{order.deliveryTracking.label}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span className="text-brand-muted">Subtotal</span>
           <span className="text-brand-ink">{formatCentsAsRand(order.subtotal_cents)}</span>
         </div>
+        {order.fulfilment_type === "delivery" && (
+          <div className="flex items-center justify-between">
+            <span className="text-brand-muted">Delivery fee</span>
+            <span className="text-brand-ink">{formatCentsAsRand(order.delivery_fee_cents)}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between font-semibold">
           <span className="text-brand-ink">Total</span>
           <span className="text-brand-ink">{formatCentsAsRand(order.total_cents)}</span>
@@ -94,7 +106,11 @@ export function OrderDetailView({
           </div>
           <div className="flex items-center justify-between font-semibold">
             <span className="text-brand-ink">You receive</span>
-            <span className="text-brand-ink">{formatCentsAsRand(order.total_cents - order.commission_amount_cents)}</span>
+            {/* Phase 7A: the delivery fee is the courier's, never the
+                seller's — subtotal_cents (not total_cents) is what
+                commission is deducted from, both here and in
+                create_order()'s own commission calculation. */}
+            <span className="text-brand-ink">{formatCentsAsRand(order.subtotal_cents - order.commission_amount_cents)}</span>
           </div>
           {order.commission_settlement_status === "owed_by_seller" && (
             <p className="mt-1 text-xs text-brand-muted">

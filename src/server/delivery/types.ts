@@ -45,15 +45,29 @@ export type BookedDelivery = {
 export type DeliveryStatus =
   "booked" | "collected_by_courier" | "in_transit" | "delivered" | "failed" | "cancelled";
 
+/** Result of asking a provider to cancel a booking it hasn't already completed. */
+export type CancelledDelivery = {
+  status: Extract<DeliveryStatus, "cancelled" | "failed">;
+  /** True if the provider actually cancelled something; false if it reports there was nothing left to cancel (already delivered/failed/unknown ref) — both are legitimate outcomes, never an error. */
+  wasCancelled: boolean;
+};
+
 /**
  * Every delivery provider (Uber Direct, Courier Guy, Bob Go, ...)
  * implements this. Nothing outside src/server/delivery/ should import a
  * provider SDK directly — go through DeliveryProvider so a new courier is
  * "add an adapter + register it", not a marketplace-wide rewrite.
+ *
+ * cancelDelivery() is Phase 7A's addition — deliberately provider-agnostic
+ * (a tracking ref in, a terminal status out) and deliberately minimal:
+ * Phase 7A itself never calls it (no cancellation UI/flow exists yet —
+ * see DECISIONS.md), it exists so the interface is complete for whoever
+ * builds that flow next, without another interface-shape change.
  */
 export interface DeliveryProvider {
   readonly slug: string;
   getQuotes(request: DeliveryQuoteRequest): Promise<DeliveryQuote[]>;
   bookDelivery(request: BookDeliveryRequest): Promise<BookedDelivery>;
   getStatus(providerTrackingRef: string): Promise<DeliveryStatus>;
+  cancelDelivery(providerTrackingRef: string): Promise<CancelledDelivery>;
 }

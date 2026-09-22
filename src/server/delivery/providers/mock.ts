@@ -3,6 +3,7 @@ import { haversineDistanceKm } from "@/lib/geo";
 import type {
   BookDeliveryRequest,
   BookedDelivery,
+  CancelledDelivery,
   DeliveryProvider,
   DeliveryQuote,
   DeliveryQuoteRequest,
@@ -55,5 +56,14 @@ export class MockDeliveryProvider implements DeliveryProvider {
 
   async getStatus(providerTrackingRef: string): Promise<DeliveryStatus> {
     return this.bookings.get(providerTrackingRef) ?? "failed";
+  }
+
+  async cancelDelivery(providerTrackingRef: string): Promise<CancelledDelivery> {
+    const current = this.bookings.get(providerTrackingRef);
+    if (!current || current === "delivered" || current === "failed" || current === "cancelled") {
+      return { status: "failed", wasCancelled: false };
+    }
+    this.bookings.set(providerTrackingRef, "cancelled");
+    return { status: "cancelled", wasCancelled: true };
   }
 }

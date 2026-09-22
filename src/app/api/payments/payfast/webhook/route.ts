@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PayFastProvider, isValidPayFastSenderHost } from "@/server/payments/providers/payfast/payfast";
+import { bookDeliveryForOrder } from "@/server/delivery/bookingService";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ) {
       console.error(`PayFast ITN rejected for order ${result.merchantReference}: ${outcome}`);
       return NextResponse.json({ error: outcome }, { status: 400 });
+    }
+
+    // Phase 7A: book the delivery once payment is confirmed — never
+    // before. Triggered on "duplicate_ignored" too, not just
+    // "confirmed": a PayFast retry of an already-paid order is exactly
+    // how a crashed/interrupted first booking attempt gets a second
+    // chance (see bookDeliveryForOrder()'s own doc comment for why).
+    // bookDeliveryForOrder() itself is a no-op for a collection order
+    // or an order that's already booked, so this is safe to call
+    // unconditionally here. Never allowed to fail the webhook response
+    // — PayFast only cares that its payment notification was received;
+    // a delivery-booking problem is logged and handled as its own
+    // concern, not surfaced as a payment processing failure.
+    if (outcome === "confirmed" || outcome === "duplicate_ignored") {
+      try {
+        await bookDeliveryForOrder(result.merchantReference);
+      } catch (err) {
+        console.error(`PayFast webhook: bookDeliveryForOrder threw for order ${result.merchantReference}: ${(err as Error).message}`);
+      }
     }
 
     // "confirmed" | "failed_recorded" | "duplicate_ignored" — all

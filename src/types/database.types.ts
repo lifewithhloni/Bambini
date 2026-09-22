@@ -50,6 +50,15 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "failed" | "refunded" |
 // financial-settlement phase; nothing in this codebase currently writes
 // it to mean "collected."
 type CommissionSettlementStatus = "collected_via_payment" | "owed_by_seller" | "settled";
+type DeliveryServiceLevel = "cheapest" | "standard" | "express";
+// Phase 7A only ever reaches 'pending' (reserved, pre-provider-call) and
+// 'booked' (the mock's only bookDelivery() outcome — see
+// src/server/delivery/providers/mock.ts). 'collected_by_courier' /
+// 'in_transit' / 'delivered' / 'failed' / 'cancelled' are typed because
+// they're real DB enum values a future real provider (or
+// cancelDelivery(), once something calls it) will actually write, not
+// because Phase 7A writes them.
+type DeliveryOrderStatus = "pending" | "booked" | "collected_by_courier" | "in_transit" | "delivered" | "failed" | "cancelled";
 
 export type Database = {
   public: {
@@ -657,6 +666,145 @@ export type Database = {
           },
         ];
       };
+
+      // Mirrors payment_providers exactly (see
+      // 20260920090400_commerce_config.sql) — publicly readable when
+      // active, writable only server-side. Seeded with a single 'mock'
+      // row (supabase/seed.sql); a real courier is enabled the same way
+      // a real payment provider would be, by inserting/activating its
+      // row once its adapter exists.
+      delivery_providers: {
+        Row: {
+          id: string;
+          slug: string;
+          name: string;
+          is_active: boolean;
+          config: Record<string, unknown>;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+
+      // Phase 7A. SELECT-only for `authenticated` (own quotes via
+      // requested_by, or once attached, the order's own buyer — see
+      // 20260930090000_delivery_quoting_booking.sql); every write goes
+      // through the service-role client from
+      // src/server/delivery/quoteService.ts, mirroring the
+      // orders/payments/commissions "money-moving tables get no direct
+      // client write access" convention (DECISIONS.md) — a delivery
+      // price is exactly that. raw_response is internal audit data,
+      // never selected back out to a browser response (see
+      // BuyerDeliveryQuote in quoteService.ts, which carries none of
+      // requested_by/product_id/pickup_location_id/dropoff_location_id/
+      // provider_quote_ref/raw_response).
+      delivery_quotes: {
+        Row: {
+          id: string;
+          order_id: string | null;
+          requested_by: string | null;
+          product_id: string | null;
+          pickup_location_id: string;
+          dropoff_location_id: string;
+          provider_id: string;
+          service_level: DeliveryServiceLevel;
+          price_cents: number;
+          currency: string;
+          eta_min_minutes: number | null;
+          eta_max_minutes: number | null;
+          provider_quote_ref: string;
+          raw_response: Record<string, unknown> | null;
+          expires_at: string;
+          created_at: string;
+        };
+        Insert: {
+          order_id?: string | null;
+          requested_by?: string | null;
+          product_id?: string | null;
+          pickup_location_id: string;
+          dropoff_location_id: string;
+          provider_id: string;
+          service_level: DeliveryServiceLevel;
+          price_cents: number;
+          currency?: string;
+          eta_min_minutes?: number | null;
+          eta_max_minutes?: number | null;
+          provider_quote_ref: string;
+          raw_response?: Record<string, unknown> | null;
+          expires_at: string;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "delivery_quotes_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "delivery_quotes_product_id_fkey";
+            columns: ["product_id"];
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "delivery_quotes_provider_id_fkey";
+            columns: ["provider_id"];
+            referencedRelation: "delivery_providers";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Phase 7A. Written only by src/server/delivery/bookingService.ts
+      // (service-role client) — the reserve-then-book pattern documented
+      // there. order_id is unique: at most one delivery_orders row per
+      // order, ever (the DB constraint, not just application logic, is
+      // what makes the booking idempotency guard race-safe).
+      delivery_orders: {
+        Row: {
+          id: string;
+          order_id: string;
+          quote_id: string | null;
+          provider_id: string;
+          provider_tracking_ref: string | null;
+          status: DeliveryOrderStatus;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          order_id: string;
+          quote_id?: string | null;
+          provider_id: string;
+          provider_tracking_ref?: string | null;
+          status?: DeliveryOrderStatus;
+        };
+        Update: Partial<{
+          provider_tracking_ref: string | null;
+          status: DeliveryOrderStatus;
+        }>;
+        Relationships: [
+          {
+            foreignKeyName: "delivery_orders_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "delivery_orders_quote_id_fkey";
+            columns: ["quote_id"];
+            referencedRelation: "delivery_quotes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "delivery_orders_provider_id_fkey";
+            columns: ["provider_id"];
+            referencedRelation: "delivery_providers";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       profiles_public: {
@@ -787,6 +935,15 @@ export type Database = {
           // (pre-Phase-4C) caller. See
           // 20260927090000_cash_collection_transactions.sql.
           p_payment_method?: PaymentMethod;
+          // Phase 7A: required (server-side, not just here) when
+          // p_fulfilment_type is 'delivery' — the id of a delivery_quotes
+          // row this same buyer already fetched via
+          // fetchDeliveryQuotesForProduct(). Must be null/omitted for
+          // 'collection'. See
+          // 20260930090000_delivery_quoting_booking.sql for everything
+          // this value is revalidated against server-side — it is never
+          // trusted to actually mean what the client claims.
+          p_delivery_quote_id?: string | null;
         };
         Returns: {
           order_id: string;
@@ -898,6 +1055,44 @@ export type Database = {
           outcome: string;
         }[];
       };
+      // Phase 7A. service_role-only (see
+      // 20260930090000_delivery_quoting_booking.sql) — called from
+      // src/server/delivery/bookingService.ts before the provider is
+      // contacted. Returns the new delivery_orders.id on success, or
+      // null if one already exists for this order (the idempotency
+      // guard, backed by delivery_orders.order_id's UNIQUE constraint).
+      reserve_delivery_order: {
+        Args: {
+          p_order_id: string;
+          p_quote_id: string;
+          p_provider_id: string;
+        };
+        Returns: string | null;
+      };
+      // Phase 7A. service_role-only — called after the provider call
+      // returns (success or failure). 'booked' additionally advances
+      // the order from 'confirmed' to 'awaiting_delivery'.
+      record_delivery_booking: {
+        Args: {
+          p_delivery_order_id: string;
+          p_provider_tracking_ref: string | null;
+          p_status: DeliveryOrderStatus;
+        };
+        Returns: undefined;
+      };
+      // Phase 7A. service_role-only — called by
+      // src/server/delivery/trackingService.ts after polling
+      // DeliveryProvider.getStatus(). See this function's own migration
+      // comment for exactly which p_status values are reachable through
+      // the mock provider today (only 'booked' — the rest are handled
+      // correctly but unexercised).
+      sync_delivery_status: {
+        Args: {
+          p_order_id: string;
+          p_status: DeliveryOrderStatus;
+        };
+        Returns: undefined;
+      };
     };
     Enums: {
       user_role: UserRole;
@@ -911,6 +1106,8 @@ export type Database = {
       order_status: OrderStatus;
       payment_status: PaymentStatus;
       commission_settlement_status: CommissionSettlementStatus;
+      delivery_service_level: DeliveryServiceLevel;
+      delivery_order_status: DeliveryOrderStatus;
     };
   };
 };
