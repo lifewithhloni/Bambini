@@ -25,6 +25,13 @@ const serverEnvSchema = z.object({
   // getPayFastHosts() for why the safer default is sandbox, not live.
   PAYFAST_SANDBOX: z.string().optional(),
   DELIVERY_PROVIDERS: z.string().default("mock"),
+  // Phase 7B: a technical rate-limit on how often trackingService.ts is
+  // allowed to call DeliveryProvider.getStatus() for the same delivery,
+  // not a business policy — see delivery_orders.last_synced_at
+  // (20261001090000_delivery_reliability.sql). 60s is a reasonable
+  // default for a page that can be viewed repeatedly; tune per provider
+  // rate limits once a real one is selected.
+  DELIVERY_TRACKING_POLL_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

@@ -183,3 +183,33 @@ function humanizeCashActionError(message?: string): string {
   if (/order not found/i.test(message)) return "Order not found.";
   return "Something went wrong. Please try again.";
 }
+
+export type CancelDeliveryOrderState = { error: string } | null;
+
+/**
+ * Phase 7B: the only cancellation path this phase implements — a buyer
+ * cancelling their own delivery order while it's still pending_payment
+ * and before any delivery_orders row exists (see
+ * cancel_pending_delivery_order(),
+ * 20261001090000_delivery_reliability.sql, for the full server-side
+ * authorization/state/restoration logic this action relies on and never
+ * duplicates). No refund path exists here because none is needed —
+ * payment never completed.
+ */
+export async function cancelPendingDeliveryOrder(orderId: string, _prev: CancelDeliveryOrderState): Promise<CancelDeliveryOrderState> {
+  await requireUser(`/orders/${orderId}/pay`);
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("cancel_pending_delivery_order", { p_order_id: orderId });
+  if (error) return { error: humanizeCancelDeliveryOrderError(error.message) };
+  revalidatePath(`/orders/${orderId}/pay`);
+  revalidatePath(`/account/orders/${orderId}`);
+  redirect(`/account/orders/${orderId}`);
+}
+
+function humanizeCancelDeliveryOrderError(message?: string): string {
+  if (!message) return "Could not cancel this order. Please try again.";
+  if (/only delivery orders/i.test(message)) return "This isn't a delivery order.";
+  if (/cannot be cancelled at this stage/i.test(message)) return "This order can no longer be cancelled.";
+  if (/order not found/i.test(message)) return "Order not found.";
+  return "Could not cancel this order. Please try again.";
+}

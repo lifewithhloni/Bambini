@@ -82,11 +82,11 @@ describe("bookDeliveryForOrder", () => {
     expect(mockAdmin.rpcMock).toHaveBeenCalledTimes(1); // only the reserve call
   });
 
-  it("books successfully: reserves, calls the provider, and records a 'booked' outcome", async () => {
+  it("books successfully: reserves, re-validates the provider, calls it with an idempotency key, and records a 'booked' outcome", async () => {
     mockAdmin.queue("orders", { data: { id: "order-1", fulfilment_type: "delivery" }, error: null });
     mockAdmin.queue("delivery_quotes", { data: { id: "quote-1", provider_id: "provider-1", pickup_location_id: "loc-a", dropoff_location_id: "loc-b", provider_quote_ref: "ref-1" }, error: null });
     mockAdmin.rpcMock.mockResolvedValueOnce({ data: "delivery-order-1", error: null }); // reserve
-    mockAdmin.queue("delivery_providers", { data: { slug: "mock" }, error: null });
+    mockAdmin.queue("delivery_providers", { data: { slug: "mock", is_active: true }, error: null });
     mockAdmin.queue("locations", { data: { latitude: -33.9, longitude: 18.4 }, error: null }); // pickup
     mockAdmin.queue("locations", { data: { latitude: -33.95, longitude: 18.45 }, error: null }); // dropoff
 
@@ -101,6 +101,7 @@ describe("bookDeliveryForOrder", () => {
       pickup: { latitude: -33.9, longitude: 18.4 },
       dropoff: { latitude: -33.95, longitude: 18.45 },
       orderId: "order-1",
+      idempotencyKey: "delivery-order-1",
     });
     expect(mockAdmin.rpcMock).toHaveBeenCalledWith("record_delivery_booking", {
       p_delivery_order_id: "delivery-order-1",
@@ -113,7 +114,7 @@ describe("bookDeliveryForOrder", () => {
     mockAdmin.queue("orders", { data: { id: "order-1", fulfilment_type: "delivery" }, error: null });
     mockAdmin.queue("delivery_quotes", { data: { id: "quote-1", provider_id: "provider-1", pickup_location_id: "loc-a", dropoff_location_id: "loc-b", provider_quote_ref: "ref-1" }, error: null });
     mockAdmin.rpcMock.mockResolvedValueOnce({ data: "delivery-order-1", error: null }); // reserve
-    mockAdmin.queue("delivery_providers", { data: { slug: "mock" }, error: null });
+    mockAdmin.queue("delivery_providers", { data: { slug: "mock", is_active: true }, error: null });
     mockAdmin.queue("locations", { data: { latitude: -33.9, longitude: 18.4 }, error: null });
     mockAdmin.queue("locations", { data: { latitude: -33.95, longitude: 18.45 }, error: null });
 
@@ -134,13 +135,36 @@ describe("bookDeliveryForOrder", () => {
     mockAdmin.queue("orders", { data: { id: "order-1", fulfilment_type: "delivery" }, error: null });
     mockAdmin.queue("delivery_quotes", { data: { id: "quote-1", provider_id: "provider-1", pickup_location_id: "loc-a", dropoff_location_id: "loc-b", provider_quote_ref: "ref-1" }, error: null });
     mockAdmin.rpcMock.mockResolvedValueOnce({ data: "delivery-order-1", error: null }); // reserve
-    mockAdmin.queue("delivery_providers", { data: { slug: "some_disabled_provider" }, error: null });
+    mockAdmin.queue("delivery_providers", { data: { slug: "some_disabled_provider", is_active: true }, error: null });
     getActiveDeliveryProvidersMock.mockReturnValue([]); // nothing registered
 
     mockAdmin.rpcMock.mockResolvedValueOnce({ data: null, error: null }); // record_delivery_booking
 
     await bookDeliveryForOrder("order-1");
 
+    expect(mockAdmin.rpcMock).toHaveBeenLastCalledWith("record_delivery_booking", {
+      p_delivery_order_id: "delivery-order-1",
+      p_provider_tracking_ref: null,
+      p_status: "failed",
+    });
+  });
+
+  it("Phase 7B: records a 'failed' outcome, and never calls the provider, when the provider was disabled in the database after order creation", async () => {
+    mockAdmin.queue("orders", { data: { id: "order-1", fulfilment_type: "delivery" }, error: null });
+    mockAdmin.queue("delivery_quotes", { data: { id: "quote-1", provider_id: "provider-1", pickup_location_id: "loc-a", dropoff_location_id: "loc-b", provider_quote_ref: "ref-1" }, error: null });
+    mockAdmin.rpcMock.mockResolvedValueOnce({ data: "delivery-order-1", error: null }); // reserve
+    // Still code-registered, but disabled in the database — this is
+    // exactly the gap the Phase 7B inspection found: create_order() only
+    // ever checked is_active once, at quote-validation time.
+    mockAdmin.queue("delivery_providers", { data: { slug: "mock", is_active: false }, error: null });
+
+    const bookDelivery = vi.fn();
+    getActiveDeliveryProvidersMock.mockReturnValue([{ slug: "mock", bookDelivery }]);
+    mockAdmin.rpcMock.mockResolvedValueOnce({ data: null, error: null }); // record_delivery_booking
+
+    await bookDeliveryForOrder("order-1");
+
+    expect(bookDelivery).not.toHaveBeenCalled();
     expect(mockAdmin.rpcMock).toHaveBeenLastCalledWith("record_delivery_booking", {
       p_delivery_order_id: "delivery-order-1",
       p_provider_tracking_ref: null,

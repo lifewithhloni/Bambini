@@ -70,12 +70,25 @@ export async function bookDeliveryForOrder(orderId: string): Promise<void> {
     return;
   }
 
-  const { data: providerRow } = await admin.from("delivery_providers").select("slug").eq("id", quote.provider_id).maybeSingle();
-  const provider = providerRow ? getActiveDeliveryProviders().find((p) => p.slug === providerRow.slug) : undefined;
+  // Phase 7B: re-checked here, not just trusted from create_order()'s
+  // own quote-time check — the provider can be disabled in the database
+  // (is_active) or removed from the code registry (DELIVERY_PROVIDERS)
+  // at any point between order creation and payment confirmation, and
+  // nothing until now re-verified either one at the moment that actually
+  // matters: right before a real courier would be contacted. Both must
+  // agree (DB row active AND a matching code-registered adapter) or
+  // booking does not proceed.
+  const { data: providerRow } = await admin.from("delivery_providers").select("slug, is_active").eq("id", quote.provider_id).maybeSingle();
+  const provider =
+    providerRow?.is_active ? getActiveDeliveryProviders().find((p) => p.slug === providerRow.slug) : undefined;
 
   if (!provider) {
     await admin.rpc("record_delivery_booking", { p_delivery_order_id: deliveryOrderId, p_provider_tracking_ref: null, p_status: "failed" });
-    console.error(`bookDeliveryForOrder: no active registered provider for order ${orderId}'s quote (provider row: ${providerRow?.slug ?? "none"}).`);
+    console.error(
+      `bookDeliveryForOrder: no active, registered provider for order ${orderId}'s quote (provider row: ${
+        providerRow?.slug ?? "none"
+      }, is_active: ${providerRow?.is_active ?? "n/a"}).`,
+    );
     return;
   }
 
@@ -99,6 +112,11 @@ export async function bookDeliveryForOrder(orderId: string): Promise<void> {
       pickup,
       dropoff,
       orderId,
+      // The reservation row's own id — stable and unique per order (see
+      // reserve_delivery_order()'s ON CONFLICT DO NOTHING guarantee) —
+      // not a promise that any given provider treats it as idempotent;
+      // see BookDeliveryRequest.idempotencyKey's own doc comment.
+      idempotencyKey: deliveryOrderId,
     });
 
     await admin.rpc("record_delivery_booking", {

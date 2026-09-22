@@ -770,6 +770,11 @@ export type Database = {
           provider_id: string;
           provider_tracking_ref: string | null;
           status: DeliveryOrderStatus;
+          // Phase 7B: when trackingService.ts last actually polled the
+          // provider (regardless of whether the status changed) —
+          // distinct from updated_at, which only changes when the status
+          // itself does. Drives the polling cooldown.
+          last_synced_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -783,6 +788,7 @@ export type Database = {
         Update: Partial<{
           provider_tracking_ref: string | null;
           status: DeliveryOrderStatus;
+          last_synced_at: string | null;
         }>;
         Relationships: [
           {
@@ -801,6 +807,43 @@ export type Database = {
             foreignKeyName: "delivery_orders_provider_id_fkey";
             columns: ["provider_id"];
             referencedRelation: "delivery_providers";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Phase 7B: the provider-webhook idempotency foundation — no
+      // webhook route reads/writes this yet (see
+      // 20261001090000_delivery_reliability.sql), so Insert/Update are
+      // typed `never` the same way orders/payments/etc. are: the only
+      // sanctioned write is record_provider_event() (service_role-only),
+      // never a raw client insert, and there is no client-side read path
+      // either (RLS enables row security with zero policies for
+      // anon/authenticated).
+      delivery_provider_events: {
+        Row: {
+          id: string;
+          provider_id: string;
+          provider_event_id: string;
+          event_type: string;
+          delivery_order_id: string | null;
+          payload: Record<string, unknown>;
+          received_at: string;
+          processed_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "delivery_provider_events_provider_id_fkey";
+            columns: ["provider_id"];
+            referencedRelation: "delivery_providers";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "delivery_provider_events_delivery_order_id_fkey";
+            columns: ["delivery_order_id"];
+            referencedRelation: "delivery_orders";
             referencedColumns: ["id"];
           },
         ];
@@ -1080,18 +1123,76 @@ export type Database = {
         };
         Returns: undefined;
       };
-      // Phase 7A. service_role-only — called by
+      // Phase 7A/7B. service_role-only — called by
       // src/server/delivery/trackingService.ts after polling
-      // DeliveryProvider.getStatus(). See this function's own migration
-      // comment for exactly which p_status values are reachable through
-      // the mock provider today (only 'booked' — the rest are handled
-      // correctly but unexercised).
+      // DeliveryProvider.getStatus(). Phase 7B added a transition guard
+      // (is_valid_delivery_status_transition()) and always bumps
+      // last_synced_at, even when p_status equals the current status —
+      // that's what drives the polling cooldown.
       sync_delivery_status: {
         Args: {
           p_order_id: string;
           p_status: DeliveryOrderStatus;
         };
         Returns: undefined;
+      };
+      // Phase 7B. service_role-only — the polling-cooldown fallback for
+      // when provider.getStatus() itself throws: bumps last_synced_at
+      // without touching status, so a down provider is still rate-limited.
+      record_delivery_sync_attempt: {
+        Args: { p_order_id: string };
+        Returns: undefined;
+      };
+      // Phase 7B. service_role-only — the provider-webhook idempotency
+      // check (20261001090000_delivery_reliability.sql): insert-on-
+      // conflict-do-nothing against (provider_id, provider_event_id).
+      // Returns the new event's id, or null if this exact
+      // (provider_id, provider_event_id) pair was already recorded — a
+      // future webhook route treats null as "safe to ignore", not an
+      // error. Nothing calls this yet; no webhook route exists.
+      record_provider_event: {
+        Args: {
+          p_provider_id: string;
+          p_provider_event_id: string;
+          p_event_type: string;
+          p_delivery_order_id: string | null;
+          p_payload?: Record<string, unknown>;
+        };
+        Returns: string | null;
+      };
+      // Phase 7B. Buyer-only (auth.uid() = orders.buyer_id, re-checked
+      // inside the function, never trusted from a parameter) — cancels a
+      // delivery order that is still pending_payment with no
+      // delivery_orders row yet. No refund logic: payment never
+      // completed, so there is nothing to refund. See
+      // 20261001090000_delivery_reliability.sql for the full
+      // authorization/restoration logic.
+      cancel_pending_delivery_order: {
+        Args: { p_order_id: string };
+        Returns: undefined;
+      };
+      // Phase 7B. Granted broadly to `authenticated`, is_admin() checked
+      // internally (same pattern as review_identity_verification()) —
+      // read-only, admin visibility into delivery_orders stuck at
+      // 'pending' past p_older_than_minutes. Never mutates anything, and
+      // deliberately excludes pickup/dropoff coordinates and raw
+      // provider responses.
+      list_stuck_pending_deliveries: {
+        Args: { p_older_than_minutes?: number };
+        Returns: {
+          delivery_order_id: string;
+          order_id: string;
+          order_reference: string;
+          provider_name: string | null;
+          quote_id: string | null;
+          service_level: DeliveryServiceLevel | null;
+          price_cents: number | null;
+          status: DeliveryOrderStatus;
+          provider_tracking_ref: string | null;
+          created_at: string;
+          updated_at: string;
+          age_minutes: number;
+        }[];
       };
     };
     Enums: {

@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveDeliveryProviders } from "./registry";
+import { getServerEnv } from "@/config/env";
 import type { Database } from "@/types/database.types";
 
 type DeliveryOrderStatus = Database["public"]["Enums"]["delivery_order_status"];
@@ -23,13 +24,24 @@ const STATUS_LABELS: Record<DeliveryOrderStatus, string> = {
   cancelled: "Delivery cancelled",
 };
 
+// A terminal delivery can never change again (sync_delivery_status()'s
+// own transition guard enforces this at the database level too — see
+// 20261001090000_delivery_reliability.sql) — polling one is always
+// wasted work, cooldown or not.
+const TERMINAL_STATUSES: ReadonlySet<DeliveryOrderStatus> = new Set(["delivered", "failed", "cancelled"]);
+
 /**
  * Buyer/seller-safe tracking read for a delivery order (§15 of the
- * phase brief) — polling-based, as instructed (no webhook architecture
- * built in this phase). Polls the provider live via getStatus(), syncs
- * a changed result into delivery_orders/orders atomically
- * (sync_delivery_status()), and returns only a status + a plain display
- * label — never provider credentials, a raw provider payload, or any
+ * Phase 7A brief; rate-limited per Phase 7B's §G). Polling-based, as
+ * instructed (no webhook architecture built yet). Polls the provider
+ * live via getStatus() at most once per
+ * DELIVERY_TRACKING_POLL_COOLDOWN_SECONDS — repeated page renders within
+ * that window return the last-synced status straight from the database
+ * without calling the provider at all. delivery_orders.last_synced_at
+ * (Phase 7B) is the source of truth for "when did we last actually ask
+ * the provider" — distinct from updated_at, which only changes when the
+ * status itself changes. Returns only a status + a plain display label,
+ * never provider credentials, a raw provider payload, or any
  * location/coordinate data. Returns null when this order has no
  * delivery_orders row yet (booking hasn't happened — e.g. payment still
  * pending) — callers should treat that as "no tracking yet", not an
@@ -40,37 +52,46 @@ export async function getDeliveryTracking(orderId: string): Promise<DeliveryTrac
 
   const { data: deliveryOrder } = await admin
     .from("delivery_orders")
-    .select("provider_id, provider_tracking_ref, status")
+    .select("provider_id, provider_tracking_ref, status, last_synced_at")
     .eq("order_id", orderId)
     .maybeSingle();
 
   if (!deliveryOrder) return null;
-  if (!deliveryOrder.provider_tracking_ref) {
-    return { status: deliveryOrder.status, label: STATUS_LABELS[deliveryOrder.status] };
+
+  const lastKnown = { status: deliveryOrder.status, label: STATUS_LABELS[deliveryOrder.status] };
+
+  if (!deliveryOrder.provider_tracking_ref) return lastKnown;
+  if (TERMINAL_STATUSES.has(deliveryOrder.status)) return lastKnown;
+
+  const cooldownSeconds = getServerEnv().DELIVERY_TRACKING_POLL_COOLDOWN_SECONDS;
+  if (deliveryOrder.last_synced_at) {
+    const elapsedSeconds = (Date.now() - new Date(deliveryOrder.last_synced_at).getTime()) / 1000;
+    if (elapsedSeconds < cooldownSeconds) return lastKnown;
   }
 
   const { data: providerRow } = await admin.from("delivery_providers").select("slug").eq("id", deliveryOrder.provider_id).maybeSingle();
   const provider = providerRow ? getActiveDeliveryProviders().find((p) => p.slug === providerRow.slug) : undefined;
-  if (!provider) {
-    return { status: deliveryOrder.status, label: STATUS_LABELS[deliveryOrder.status] };
-  }
+  if (!provider) return lastKnown;
 
   let liveStatus: DeliveryOrderStatus;
   try {
     liveStatus = await provider.getStatus(deliveryOrder.provider_tracking_ref);
   } catch {
-    // Provider unreachable — show the last known status rather than fail the page.
-    return { status: deliveryOrder.status, label: STATUS_LABELS[deliveryOrder.status] };
+    // Provider unreachable — still record the attempt so a down
+    // provider gets polled at most once per cooldown window too, not
+    // once per page view. Falls back to the last known status either way.
+    await admin.rpc("record_delivery_sync_attempt", { p_order_id: orderId });
+    return lastKnown;
   }
 
-  if (liveStatus === deliveryOrder.status) {
-    return { status: liveStatus, label: STATUS_LABELS[liveStatus] };
-  }
-
+  // Always synced on a successful poll, even when the status is
+  // unchanged — sync_delivery_status() bumps last_synced_at
+  // unconditionally (that's what makes the cooldown above work) and its
+  // own transition guard treats old===new as a safe no-op.
   const { error } = await admin.rpc("sync_delivery_status", { p_order_id: orderId, p_status: liveStatus });
   if (error) {
     console.error(`getDeliveryTracking: sync_delivery_status failed for order ${orderId}: ${error.message}`);
-    return { status: deliveryOrder.status, label: STATUS_LABELS[deliveryOrder.status] };
+    return lastKnown;
   }
 
   return { status: liveStatus, label: STATUS_LABELS[liveStatus] };

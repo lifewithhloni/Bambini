@@ -18,6 +18,13 @@ import type {
 export class MockDeliveryProvider implements DeliveryProvider {
   readonly slug = "mock";
   private readonly bookings = new Map<string, DeliveryStatus>();
+  // Phase 7B: demonstrates what BookDeliveryRequest.idempotencyKey is
+  // for — a repeated key returns the SAME tracking ref instead of
+  // minting a new booking. This is the one adapter that actually does
+  // this today; it's the reference behavior a real adapter's own
+  // provider-specific mechanism should reproduce, not a claim that any
+  // real provider works this way automatically.
+  private readonly trackingRefByIdempotencyKey = new Map<string, string>();
 
   async getQuotes(request: DeliveryQuoteRequest): Promise<DeliveryQuote[]> {
     const distanceKm = haversineDistanceKm(request.pickup, request.dropoff);
@@ -48,9 +55,15 @@ export class MockDeliveryProvider implements DeliveryProvider {
     }));
   }
 
-  async bookDelivery(_request: BookDeliveryRequest): Promise<BookedDelivery> {
+  async bookDelivery(request: BookDeliveryRequest): Promise<BookedDelivery> {
+    const existingRef = this.trackingRefByIdempotencyKey.get(request.idempotencyKey);
+    if (existingRef) {
+      return { providerSlug: this.slug, providerTrackingRef: existingRef, status: this.bookings.get(existingRef) ?? "booked" };
+    }
+
     const trackingRef = randomUUID();
     this.bookings.set(trackingRef, "booked");
+    this.trackingRefByIdempotencyKey.set(request.idempotencyKey, trackingRef);
     return { providerSlug: this.slug, providerTrackingRef: trackingRef, status: "booked" };
   }
 

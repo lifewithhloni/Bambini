@@ -22,6 +22,7 @@ describe("MockDeliveryProvider", () => {
       pickup: capeTown,
       dropoff: nearbySuburb,
       orderId: "order-1",
+      idempotencyKey: "delivery-order-1",
     });
     expect(booked.status).toBe("booked");
     await expect(provider.getStatus(booked.providerTrackingRef)).resolves.toBe("booked");
@@ -39,6 +40,7 @@ describe("MockDeliveryProvider", () => {
       pickup: capeTown,
       dropoff: nearbySuburb,
       orderId: "order-2",
+      idempotencyKey: "delivery-order-2",
     });
 
     const cancelled = await provider.cancelDelivery(booked.providerTrackingRef);
@@ -49,5 +51,43 @@ describe("MockDeliveryProvider", () => {
   it("reports cancelling an unknown tracking ref as a no-op, not an error", async () => {
     const provider = new MockDeliveryProvider();
     await expect(provider.cancelDelivery("unknown")).resolves.toEqual({ status: "failed", wasCancelled: false });
+  });
+
+  it("Phase 7B: a repeated idempotencyKey returns the same booking instead of minting a new one", async () => {
+    const provider = new MockDeliveryProvider();
+    const first = await provider.bookDelivery({
+      providerQuoteRef: "quote-3",
+      pickup: capeTown,
+      dropoff: nearbySuburb,
+      orderId: "order-3",
+      idempotencyKey: "delivery-order-3",
+    });
+    const second = await provider.bookDelivery({
+      providerQuoteRef: "quote-3",
+      pickup: capeTown,
+      dropoff: nearbySuburb,
+      orderId: "order-3",
+      idempotencyKey: "delivery-order-3",
+    });
+    expect(second.providerTrackingRef).toBe(first.providerTrackingRef);
+  });
+
+  it("Phase 7B: two different idempotencyKeys produce two distinct bookings", async () => {
+    const provider = new MockDeliveryProvider();
+    const first = await provider.bookDelivery({
+      providerQuoteRef: "quote-4",
+      pickup: capeTown,
+      dropoff: nearbySuburb,
+      orderId: "order-4",
+      idempotencyKey: "delivery-order-4a",
+    });
+    const second = await provider.bookDelivery({
+      providerQuoteRef: "quote-4",
+      pickup: capeTown,
+      dropoff: nearbySuburb,
+      orderId: "order-4",
+      idempotencyKey: "delivery-order-4b",
+    });
+    expect(second.providerTrackingRef).not.toBe(first.providerTrackingRef);
   });
 });

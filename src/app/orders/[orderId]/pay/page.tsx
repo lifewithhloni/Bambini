@@ -4,6 +4,7 @@ import { requireUser } from "@/server/auth/requireUser";
 import { getOrder } from "@/server/orders/getOrder";
 import { formatCentsAsRand } from "@/server/listings/price";
 import { PayButton } from "./PayButton";
+import { CancelOrderButton } from "./CancelOrderButton";
 
 // Depends on the live payment/order state for this specific buyer —
 // never statically cached.
@@ -64,6 +65,13 @@ export default async function PayForOrderPage({
       </p>
 
       <PayButton orderId={orderId} />
+
+      {/* Phase 7B: cancellation is only ever offered here — before
+          payment, before any delivery has been booked. Once paid, the
+          order moves off this page entirely (see the payment_status
+          redirect above), so this button can never coexist with a paid
+          or booked order. */}
+      {order.fulfilment_type === "delivery" && <CancelOrderButton orderId={orderId} />}
 
       <Link href={`/account/orders/${orderId}`} className="text-center text-sm text-brand-muted hover:underline">
         Back to order details

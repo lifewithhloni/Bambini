@@ -34,6 +34,34 @@ export type BookDeliveryRequest = {
   pickup: GeoPoint;
   dropoff: GeoPoint;
   orderId: string;
+  /**
+   * Phase 7B: an explicit idempotency signal, distinct from `orderId`.
+   * Bambini's own booking flow (src/server/delivery/bookingService.ts)
+   * already guarantees at most one bookDelivery() attempt is *started*
+   * per order (reserve_delivery_order()'s unique constraint) — but that
+   * guarantee is about Bambini's own database, not about the provider.
+   * If a booking attempt crashes after this call reaches the provider
+   * but before Bambini records the result, the only safe recovery is a
+   * human checking the provider's own records (see the Phase 7B report's
+   * "stuck pending" analysis) — an automatic retry would call
+   * bookDelivery() again, and *this* is the value a real adapter must
+   * send the provider so the provider itself can recognize a retried
+   * attempt and return the original booking instead of creating a
+   * second, real delivery.
+   *
+   * Do NOT assume any provider treats `orderId` (or this field) as
+   * idempotent merely because it's present in the request — that is a
+   * property of each specific provider's own API and protocol
+   * (dedicated idempotency-key header, a `client_reference` field with
+   * server-side dedup, etc.), which is exactly why this field exists as
+   * its own explicit, required part of the interface rather than being
+   * silently inferred from `orderId`: it forces every future adapter to
+   * decide, deliberately, how it satisfies this guarantee for its own
+   * provider — never to skip the question. MockDeliveryProvider is the
+   * one adapter that actually honors it today (see providers/mock.ts);
+   * no real provider integration exists yet.
+   */
+  idempotencyKey: string;
 };
 
 export type BookedDelivery = {
