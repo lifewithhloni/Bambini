@@ -219,7 +219,7 @@ describe("cash collection transactions", () => {
          values ($1, 'parent', $2, 'collection', 'online', 'completed', 10000, 10000, 1200, 1200) returning id`,
         [buyer, seller],
       );
-      await db.query(`insert into public.disputes (order_id, raised_by, reason, status) values ($1, $2, 'Item not as described', 'open')`, [
+      await db.query(`insert into public.disputes (order_id, raised_by, reason, status) values ($1, $2, 'item_not_as_described', 'open')`, [
         priorOrder.rows[0].id,
         buyer,
       ]);

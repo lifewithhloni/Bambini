@@ -66,6 +66,14 @@ type DeliveryServiceLevel = "cheapest" | "standard" | "express";
 // cancelDelivery(), once something calls it) will actually write, not
 // because Phase 7A writes them.
 type DeliveryOrderStatus = "pending" | "booked" | "collected_by_courier" | "in_transit" | "delivered" | "failed" | "cancelled";
+// Phase 9 is the first thing to ever write 'disputed' to orders.status
+// (open_dispute()/resolve_dispute()) — it existed, unused, since the
+// foundation phase. 'refunded' remains unwritten; no refund provider
+// exists yet.
+type DisputeStatus = "open" | "under_review" | "resolved_buyer" | "resolved_seller" | "resolved_partial" | "closed";
+// Phase 9 — public.disputes.reason was a plain unconstrained text
+// column until this phase (see 20261008090000_disputes_and_transaction_protection.sql).
+type DisputeReason = "item_not_received" | "item_not_as_described" | "damaged_item" | "wrong_item" | "delivery_problem" | "collection_problem" | "other";
 
 export type Database = {
   public: {
@@ -587,6 +595,51 @@ export type Database = {
             foreignKeyName: "commissions_order_id_fkey";
             columns: ["order_id"];
             referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Phase 9. Existed since the foundation phase, unused until now —
+      // see 20261008090000_disputes_and_transaction_protection.sql for
+      // the full audit. Every write goes through open_dispute()/
+      // respond_to_dispute()/resolve_dispute()/close_dispute() (all
+      // SECURITY DEFINER); disputes_select_participant_or_admin RLS
+      // (raised_by, order participant, or admin) is unchanged.
+      disputes: {
+        Row: {
+          id: string;
+          order_id: string;
+          raised_by: string;
+          reason: DisputeReason;
+          description: string | null;
+          status: DisputeStatus;
+          resolution_notes: string | null;
+          resolved_by: string | null;
+          resolved_at: string | null;
+          created_at: string;
+          updated_at: string;
+          // Phase 9 — only ever set together, by respond_to_dispute().
+          seller_response: string | null;
+          seller_responded_at: string | null;
+          // Phase 9 — set once, at open_dispute() time; what
+          // resolve_dispute() restores the order to on a
+          // resolved_seller/resolved_partial outcome.
+          pre_dispute_order_status: OrderStatus;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "disputes_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "disputes_raised_by_fkey";
+            columns: ["raised_by"];
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
         ];
@@ -1460,6 +1513,45 @@ export type Database = {
         Args: { p_business_id: string };
         Returns: string;
       };
+      // Phase 9. Buyer-only — validates order.buyer_id = auth.uid() and
+      // order-state eligibility server-side. Returns the new dispute's
+      // id. p_description is optional.
+      open_dispute: {
+        Args: {
+          p_order_id: string;
+          p_reason: DisputeReason;
+          p_description?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 9. Seller-only (any business member for a business order —
+      // see this function's own migration comment for why that's the
+      // correct tier here, unlike Phase 8C's owner-only payout gate).
+      respond_to_dispute: {
+        Args: {
+          p_dispute_id: string;
+          p_response: string;
+        };
+        Returns: undefined;
+      };
+      // Phase 9. Admin-only. p_outcome must be one of resolved_buyer/
+      // resolved_seller/resolved_partial — never moves money, only
+      // records the decision and (for a seller/partial outcome) restores
+      // the order's pre-dispute status.
+      resolve_dispute: {
+        Args: {
+          p_dispute_id: string;
+          p_outcome: DisputeStatus;
+          p_resolution_notes: string;
+        };
+        Returns: undefined;
+      };
+      // Phase 9. Admin-only, purely archival — only reachable from an
+      // already-resolved dispute.
+      close_dispute: {
+        Args: { p_dispute_id: string };
+        Returns: undefined;
+      };
     };
     Enums: {
       user_role: UserRole;
@@ -1476,6 +1568,8 @@ export type Database = {
       delivery_service_level: DeliveryServiceLevel;
       delivery_order_status: DeliveryOrderStatus;
       payout_status: PayoutStatus;
+      dispute_status: DisputeStatus;
+      dispute_reason: DisputeReason;
     };
   };
 };

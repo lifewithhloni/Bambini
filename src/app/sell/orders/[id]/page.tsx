@@ -2,10 +2,12 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/requireUser";
 import { createClient } from "@/lib/supabase/server";
 import { getOrder, type OrderDetail } from "@/server/orders/getOrder";
+import { getOrderDispute } from "@/server/disputes/getOrderDispute";
 import { getSignedImageUrls } from "@/server/listings/imageUrls";
 import { OrderDetailView } from "@/components/orders/OrderDetailView";
 import { CashOrderActions } from "@/components/orders/CashOrderActions";
 import { ConfirmCollectionForm } from "@/components/orders/ConfirmCollectionForm";
+import { DisputeSection } from "@/components/orders/DisputeSection";
 
 // One specific signed-in seller's own order — never statically cached.
 export const dynamic = "force-dynamic";
@@ -45,11 +47,14 @@ export default async function SellerOrderDetailPage({ params }: { params: Promis
 
   const imageUrls = order.item?.coverImagePath ? await getSignedImageUrls([order.item.coverImagePath]) : {};
   const imageUrl = order.item?.coverImagePath ? (imageUrls[order.item.coverImagePath] ?? null) : null;
+  const dispute = await getOrderDispute(order.id);
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-12">
       <h1 className="text-xl font-semibold text-brand-ink">Order details</h1>
       <OrderDetailView order={order} viewerRole="seller" imageUrl={imageUrl} />
+
+      <DisputeSection orderId={order.id} orderStatus={order.status} dispute={dispute} viewerRole="seller" />
 
       {order.payment_method === "cash" && order.status === "pending_payment" && <CashOrderActions orderId={order.id} />}
 
