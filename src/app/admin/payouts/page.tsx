@@ -1,8 +1,10 @@
+import { Fragment } from "react";
 import { listPayoutEligibleOrders } from "@/server/payouts/adminPayoutEligibility";
 import { listPayouts } from "@/server/payouts/adminPayouts";
 import { formatCentsAsRand } from "@/server/listings/price";
 import { CreatePayoutButton } from "./CreatePayoutButton";
 import { PayoutStatusActions } from "./PayoutStatusActions";
+import { RecoverPayoutAction } from "./RecoverPayoutAction";
 
 // Live financial/operational data — never statically cached.
 export const dynamic = "force-dynamic";
@@ -75,7 +77,7 @@ export default async function AdminPayoutsPage() {
                   <th className="px-3 py-2">Orders</th>
                   <th className="px-3 py-2">Amount</th>
                   <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Created</th>
+                  <th className="px-3 py-2">Requested</th>
                   <th className="px-3 py-2">Paid</th>
                   <th className="px-3 py-2">Reference</th>
                   <th className="px-3 py-2">Actions</th>
@@ -83,16 +85,45 @@ export default async function AdminPayoutsPage() {
               </thead>
               <tbody>
                 {payouts.map((p) => (
-                  <tr key={p.id} className="border-b border-brand-border last:border-0 align-top">
-                    <td className="px-3 py-2 font-medium text-brand-ink">{p.sellerName ?? "—"}</td>
-                    <td className="px-3 py-2">{p.orderCount}</td>
-                    <td className="px-3 py-2">{formatCentsAsRand(p.amountCents)}</td>
-                    <td className="px-3 py-2 capitalize">{p.status}</td>
-                    <td className="px-3 py-2 text-xs text-brand-muted">{new Date(p.createdAt).toLocaleDateString()}</td>
-                    <td className="px-3 py-2 text-xs text-brand-muted">{p.paidAt ? new Date(p.paidAt).toLocaleDateString() : "—"}</td>
-                    <td className="px-3 py-2 text-xs text-brand-muted">{p.providerReference ?? "—"}</td>
-                    <td className="px-3 py-2">{(p.status === "pending" || p.status === "processing") && <PayoutStatusActions payoutId={p.id} />}</td>
-                  </tr>
+                  <Fragment key={p.id}>
+                    <tr className="border-b border-brand-border last:border-0 align-top">
+                      <td className="px-3 py-2 font-medium text-brand-ink">{p.sellerName ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {p.orders.length === 0 ? (
+                          p.orderCount
+                        ) : (
+                          <details>
+                            <summary className="cursor-pointer">{p.orderCount}</summary>
+                            <ul className="mt-1 flex flex-col gap-0.5 text-xs text-brand-muted">
+                              {p.orders.map((o) => (
+                                <li key={o.orderId} className="flex items-center justify-between gap-2">
+                                  <span>{o.orderReference ?? o.orderId}</span>
+                                  <span>{formatCentsAsRand(o.amountCents)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">{formatCentsAsRand(p.amountCents)}</td>
+                      <td className="px-3 py-2 capitalize">{p.status}</td>
+                      <td className="px-3 py-2 text-xs text-brand-muted">{new Date(p.createdAt).toLocaleDateString()}</td>
+                      <td className="px-3 py-2 text-xs text-brand-muted">{p.paidAt ? new Date(p.paidAt).toLocaleDateString() : "—"}</td>
+                      <td className="px-3 py-2 text-xs text-brand-muted">{p.providerReference ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {(p.status === "pending" || p.status === "processing") && <PayoutStatusActions payoutId={p.id} />}
+                        {p.status === "failed" && <RecoverPayoutAction payoutId={p.id} />}
+                      </td>
+                    </tr>
+                    {p.status === "recovered" && (
+                      <tr className="border-b border-brand-border last:border-0 bg-brand-bg">
+                        <td colSpan={8} className="px-3 py-2 text-xs text-brand-muted">
+                          Recovered by {p.recoveredByName ?? "an admin"} on {p.recoveredAt ? new Date(p.recoveredAt).toLocaleDateString() : "—"}
+                          {p.recoveryReason ? <> — &ldquo;{p.recoveryReason}&rdquo;</> : null}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

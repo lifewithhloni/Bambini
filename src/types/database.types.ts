@@ -53,8 +53,10 @@ type CommissionSettlementStatus = "collected_via_payment" | "owed_by_seller" | "
 // Existed since the foundation phase; Phase 8A is the first thing to
 // ever write it (create_seller_payout()/mark_payout_paid()/
 // mark_payout_failed()). 'processing' is unused by this phase — nothing
-// here has a real payment rail to be "in flight" through yet.
-type PayoutStatus = "pending" | "processing" | "paid" | "failed";
+// here has a real payment rail to be "in flight" through yet. 'recovered'
+// is Phase 8B's own addition (recover_failed_payout()) — a closed
+// historical record distinct from 'failed', never mutated again.
+type PayoutStatus = "pending" | "processing" | "paid" | "failed" | "recovered";
 type DeliveryServiceLevel = "cheapest" | "standard" | "express";
 // Phase 7A only ever reaches 'pending' (reserved, pre-provider-call) and
 // 'booked' (the mock's only bookDelivery() outcome — see
@@ -609,6 +611,10 @@ export type Database = {
           provider_reference: string | null;
           created_at: string;
           paid_at: string | null;
+          // Phase 8B — only ever set together, by recover_failed_payout().
+          recovered_by: string | null;
+          recovered_at: string | null;
+          recovery_reason: string | null;
         };
         Insert: never;
         Update: never;
@@ -628,15 +634,21 @@ export type Database = {
         ];
       };
 
-      // Phase 8A. order_id is unique (added this phase) — the actual
-      // double-payout guarantee; the (payout_id, order_id) primary key
-      // alone only prevented a duplicate within a single payout, not
-      // across two different ones.
+      // Phase 8A: order_id was made unique — the actual double-payout
+      // guarantee; the (payout_id, order_id) primary key alone only
+      // prevented a duplicate within a single payout, not across two
+      // different ones. Phase 8B replaced that plain UNIQUE with a
+      // partial one scoped to `superseded_at is null` (see
+      // 20261005090000_payout_recovery.sql) — null means this row is
+      // the currently-active claim on its order; non-null means it was
+      // superseded by recover_failed_payout() and is now purely
+      // historical, never deleted.
       payout_items: {
         Row: {
           payout_id: string;
           order_id: string;
           amount_cents: number;
+          superseded_at: string | null;
           created_at: string;
         };
         Insert: never;
@@ -1406,6 +1418,32 @@ export type Database = {
           p_notes?: string | null;
         };
         Returns: undefined;
+      };
+      // Phase 8B. Admin-only, requires a non-empty reason, only valid
+      // from status = 'failed'. Supersedes (never deletes) the payout's
+      // payout_items rows — see this function's own migration comment
+      // for the partial-unique-index design this depends on.
+      recover_failed_payout: {
+        Args: {
+          p_payout_id: string;
+          p_reason: string;
+        };
+        Returns: undefined;
+      };
+      // Phase 8B (extension). Read-only, server-authoritative — never a
+      // stored/mutable value. Parent sellers only (see this function's
+      // own migration comment for why business payouts stay
+      // admin-initiated).
+      get_seller_available_balance: {
+        Args: Record<PropertyKey, never>;
+        Returns: number;
+      };
+      // Phase 8B (extension). Seller-only, no arguments at all — the
+      // caller (auth.uid()) IS the seller; every eligible order and the
+      // total are derived entirely server-side, order-independent.
+      request_seller_payout: {
+        Args: Record<PropertyKey, never>;
+        Returns: string;
       };
     };
     Enums: {

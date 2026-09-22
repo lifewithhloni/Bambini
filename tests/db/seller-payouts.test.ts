@@ -408,7 +408,7 @@ describe("seller payouts (Phase 8A)", () => {
       expect(payouts.rows).toHaveLength(1);
     });
 
-    it("the database-level unique constraint on payout_items.order_id is the irreducible guarantee, independent of application logic", async () => {
+    it("the database-level unique constraint on payout_items.order_id (active claims only, as of Phase 8B) is the irreducible guarantee, independent of application logic", async () => {
       const seller = await makeUser(db, "Unique Constraint Seller");
       const productId = await makeParentProduct(seller, "Unique Constraint Toy", 50000);
       const { orderId } = await makeCompletedOnlineOrder({ productId, seller, priceCents: 50000 });
@@ -419,9 +419,13 @@ describe("seller payouts (Phase 8A)", () => {
         `insert into public.payouts (recipient_type, recipient_profile_id, amount_cents, status, period_start, period_end) values ('parent', $1, 1, 'pending', now(), now()) returning id`,
         [seller],
       );
+      // Phase 8B replaced the plain UNIQUE(order_id) with a partial index
+      // scoped to still-active (superseded_at is null) rows — see
+      // 20261005090000_payout_recovery.sql. This still-active row is
+      // exactly what this insert collides with.
       await expect(
         db.query(`insert into public.payout_items (payout_id, order_id, amount_cents) values ($1, $2, 1)`, [secondPayout.rows[0].id, orderId]),
-      ).rejects.toThrow(/payout_items_order_id_unique/i);
+      ).rejects.toThrow(/payout_items_order_id_active_unique/i);
       void payoutId;
     });
 

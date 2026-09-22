@@ -23,8 +23,12 @@ export type EligibleSellerGroup = {
 
 /**
  * Admin-only (requireAdmin() 404s otherwise) — orders that are
- * completed, paid online, and not yet claimed by any payout_items row.
- * RLS (orders_select_participant_or_admin, delivery
+ * completed, paid online, and have no currently-ACTIVE payout_items
+ * claim (superseded_at is null — see
+ * 20261005090000_payout_recovery.sql). A recovered order's old claim is
+ * superseded, not deleted, so it's correctly excluded from this filter
+ * and the order becomes eligible again, exactly as Phase 8B intends.
+ * RLS (orders_select_participant_or_admin,
  * payout_items_select_recipient_or_admin) already permits an admin's
  * own session to read everything this needs directly — unlike Phase
  * 7D's delivery-financials view, nothing here is column-restricted, so
@@ -47,13 +51,13 @@ export async function listPayoutEligibleOrders(): Promise<EligibleSellerGroup[]>
       .eq("payment_method", "online")
       .eq("status", "completed")
       .order("completed_at", { ascending: true }),
-    supabase.from("payout_items").select("order_id"),
+    supabase.from("payout_items").select("order_id").is("superseded_at", null),
   ]);
 
   if (!orders) return [];
 
-  const alreadyPaidOut = new Set((payoutItems ?? []).map((p) => p.order_id));
-  const eligible = orders.filter((o) => !alreadyPaidOut.has(o.id));
+  const alreadyClaimed = new Set((payoutItems ?? []).map((p) => p.order_id));
+  const eligible = orders.filter((o) => !alreadyClaimed.has(o.id));
   if (eligible.length === 0) return [];
 
   const sellerProfileIds = Array.from(new Set(eligible.filter((o) => o.seller_type === "parent" && o.seller_profile_id).map((o) => o.seller_profile_id as string)));
