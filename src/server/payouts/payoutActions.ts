@@ -100,6 +100,28 @@ export async function requestPayout(_prev: PayoutActionState): Promise<PayoutAct
   return { success: true };
 }
 
+/**
+ * request_business_payout() is the real authorization/validation
+ * boundary — it independently re-checks that auth.uid() is the
+ * business's owner (never just any member — see this function's own
+ * migration comment for that reasoning), locks and re-derives the
+ * eligible orders and total server-side. businessId here is only ever a
+ * lookup key, never trusted on its own: the RPC rejects it outright if
+ * the caller doesn't actually own that business. requireUser() is the
+ * same UI-convenience gate every other authenticated-only action in
+ * this codebase already uses — never the real check.
+ */
+export async function requestBusinessPayout(businessId: string, _prev: PayoutActionState): Promise<PayoutActionState> {
+  await requireUser(`/account/business/${businessId}`);
+  const supabase = await createClient();
+
+  const { error } = await supabase.rpc("request_business_payout", { p_business_id: businessId });
+  if (error) return { error: humanizePayoutError(error.message) };
+
+  revalidatePath(`/account/business/${businessId}`);
+  return { success: true };
+}
+
 function humanizePayoutError(message?: string): string {
   if (!message) return "Could not complete this action. Please try again.";
   if (/already been paid out/i.test(message)) return "One or more of these orders have already been paid out.";
@@ -117,6 +139,8 @@ function humanizePayoutError(message?: string): string {
   if (/recovered payout cannot be marked as failed/i.test(message)) return "A recovered payout can't be marked as failed.";
   if (/no eligible earnings/i.test(message)) return "You have no available earnings to withdraw right now.";
   if (/authentication required/i.test(message)) return "Please sign in and try again.";
+  if (/only the business owner can request/i.test(message)) return "Only the business owner can request a payout.";
+  if (/not authorized to view this business/i.test(message)) return "You don't have access to this business's balance.";
   if (/not found/i.test(message)) return "One or more orders were not found.";
   return "Could not complete this action. Please try again.";
 }

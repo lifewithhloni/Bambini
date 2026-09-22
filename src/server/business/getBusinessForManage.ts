@@ -11,6 +11,11 @@ export type BusinessForManage = {
   logoUrl: string | null;
   verificationStatus: string;
   location: { suburb: string | null; city: string | null } | null;
+  // Phase 8C — display-only, same caveat as getMyBusinesses()'s own
+  // isOwner: any action that actually needs the ownership check
+  // (e.g. request_business_payout()) re-derives it server-side/RLS
+  // regardless of what this says.
+  ownerProfileId: string;
 };
 
 /**
@@ -24,7 +29,7 @@ export async function getBusinessForManage(businessId: string): Promise<Business
 
   const { data: business, error } = await supabase
     .from("businesses")
-    .select("id, business_name, slug, registration_number, vat_number, description, logo_url, verification_status, location_id")
+    .select("id, business_name, slug, registration_number, vat_number, description, logo_url, verification_status, location_id, owner_profile_id")
     .eq("id", businessId)
     .maybeSingle();
 
@@ -46,5 +51,6 @@ export async function getBusinessForManage(businessId: string): Promise<Business
     logoUrl: business.logo_url,
     verificationStatus: business.verification_status,
     location,
+    ownerProfileId: business.owner_profile_id,
   };
 }

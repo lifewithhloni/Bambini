@@ -1445,6 +1445,21 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: string;
       };
+      // Phase 8C. Read-only, server-authoritative. Any business member
+      // (owner or staff) may read this — see
+      // 20261007090000_business_requested_payouts.sql for the
+      // owner-vs-member authorization model this reuses.
+      get_business_available_balance: {
+        Args: { p_business_id: string };
+        Returns: number;
+      };
+      // Phase 8C. Business-owner-only (not any member — see this
+      // function's own migration comment for why). Every eligible order
+      // and the total are derived entirely server-side, order-independent.
+      request_business_payout: {
+        Args: { p_business_id: string };
+        Returns: string;
+      };
     };
     Enums: {
       user_role: UserRole;

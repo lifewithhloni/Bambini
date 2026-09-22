@@ -87,7 +87,10 @@ export default async function AdminPayoutsPage() {
                 {payouts.map((p) => (
                   <Fragment key={p.id}>
                     <tr className="border-b border-brand-border last:border-0 align-top">
-                      <td className="px-3 py-2 font-medium text-brand-ink">{p.sellerName ?? "—"}</td>
+                      <td className="px-3 py-2 font-medium text-brand-ink">
+                        {p.sellerName ?? "—"}
+                        <span className="ml-1.5 rounded-full bg-brand-bg px-1.5 py-0.5 text-[10px] font-normal capitalize text-brand-muted">{p.sellerType}</span>
+                      </td>
                       <td className="px-3 py-2">
                         {p.orders.length === 0 ? (
                           p.orderCount
