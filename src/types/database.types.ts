@@ -50,6 +50,11 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "failed" | "refunded" |
 // financial-settlement phase; nothing in this codebase currently writes
 // it to mean "collected."
 type CommissionSettlementStatus = "collected_via_payment" | "owed_by_seller" | "settled";
+// Existed since the foundation phase; Phase 8A is the first thing to
+// ever write it (create_seller_payout()/mark_payout_paid()/
+// mark_payout_failed()). 'processing' is unused by this phase — nothing
+// here has a real payment rail to be "in flight" through yet.
+type PayoutStatus = "pending" | "processing" | "paid" | "failed";
 type DeliveryServiceLevel = "cheapest" | "standard" | "express";
 // Phase 7A only ever reaches 'pending' (reserved, pre-provider-call) and
 // 'booked' (the mock's only bookDelivery() outcome — see
@@ -580,6 +585,100 @@ export type Database = {
             foreignKeyName: "commissions_order_id_fkey";
             columns: ["order_id"];
             referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Phase 8A. Existed since the foundation phase, unused until now —
+      // see 20261004090000_seller_payouts.sql for the full audit. The
+      // only write path is create_seller_payout()/mark_payout_paid()/
+      // mark_payout_failed() (all SECURITY DEFINER, admin-only); RLS
+      // (payouts_select_recipient_or_admin) already correctly scoped
+      // this to the recipient seller or an admin, unchanged.
+      payouts: {
+        Row: {
+          id: string;
+          recipient_type: SellerType;
+          recipient_profile_id: string | null;
+          recipient_business_id: string | null;
+          amount_cents: number;
+          status: PayoutStatus;
+          period_start: string;
+          period_end: string;
+          provider_reference: string | null;
+          created_at: string;
+          paid_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "payouts_recipient_profile_id_fkey";
+            columns: ["recipient_profile_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "payouts_recipient_business_id_fkey";
+            columns: ["recipient_business_id"];
+            referencedRelation: "businesses";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Phase 8A. order_id is unique (added this phase) — the actual
+      // double-payout guarantee; the (payout_id, order_id) primary key
+      // alone only prevented a duplicate within a single payout, not
+      // across two different ones.
+      payout_items: {
+        Row: {
+          payout_id: string;
+          order_id: string;
+          amount_cents: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "payout_items_payout_id_fkey";
+            columns: ["payout_id"];
+            referencedRelation: "payouts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "payout_items_order_id_fkey";
+            columns: ["order_id"];
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // Phase 5/6's own audit table, now also written by the Phase 8A
+      // payout functions. No RLS SELECT policy for `authenticated` at
+      // all in this codebase yet (nothing has needed to list admin
+      // actions from the client) — reading this table isn't part of
+      // this phase's scope either.
+      admin_actions: {
+        Row: {
+          id: string;
+          admin_id: string;
+          action_type: string;
+          target_type: string;
+          target_id: string;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "admin_actions_admin_id_fkey";
+            columns: ["admin_id"];
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
         ];
@@ -1281,6 +1380,33 @@ export type Database = {
           payment_status: PaymentStatus | null;
         }[];
       };
+      // Phase 8A. Admin-only (is_admin() checked internally). Validates
+      // every order is online, completed, belongs to the same seller,
+      // and isn't already in any payout — all-or-nothing, one
+      // transaction. Returns the new payout's id.
+      create_seller_payout: {
+        Args: { p_order_ids: string[] };
+        Returns: string;
+      };
+      // Phase 8A. Admin-only. State-guarded (rejects an already-paid or
+      // already-failed payout) — never a silent re-application.
+      mark_payout_paid: {
+        Args: {
+          p_payout_id: string;
+          p_provider_reference?: string | null;
+        };
+        Returns: undefined;
+      };
+      // Phase 8A. Admin-only. Deliberately does NOT release the
+      // payout's order claims for retry — see this function's own
+      // migration comment for why that's unsafe to automate.
+      mark_payout_failed: {
+        Args: {
+          p_payout_id: string;
+          p_notes?: string | null;
+        };
+        Returns: undefined;
+      };
     };
     Enums: {
       user_role: UserRole;
@@ -1296,6 +1422,7 @@ export type Database = {
       commission_settlement_status: CommissionSettlementStatus;
       delivery_service_level: DeliveryServiceLevel;
       delivery_order_status: DeliveryOrderStatus;
+      payout_status: PayoutStatus;
     };
   };
 };

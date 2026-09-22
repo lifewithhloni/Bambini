@@ -14,7 +14,12 @@ export default async function SellerOrdersPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-8 sm:py-12">
-      <h1 className="text-2xl font-semibold text-brand-ink">Orders</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-brand-ink">Orders</h1>
+        <Link href="/sell/payouts" className="text-sm font-medium text-brand-ink underline hover:no-underline">
+          Payouts
+        </Link>
+      </div>
 
       {orders.length === 0 ? (
         <div className="rounded-lg border border-dashed border-brand-border px-4 py-10 text-center">
