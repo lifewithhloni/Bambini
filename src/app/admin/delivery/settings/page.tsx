@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentDeliveryMarkupSetting } from "@/server/delivery/adminMarkupSettings";
 import { MarkupSettingsForm } from "./MarkupSettingsForm";
 
@@ -22,6 +23,14 @@ export default async function AdminDeliverySettingsPage() {
           The percentage Bambini adds on top of the delivery provider&apos;s own cost. The buyer only ever sees the
           marked-up total — the provider&apos;s raw cost is never shown to them.
         </p>
+        <div className="mt-2 flex gap-3">
+          <Link href="/admin/delivery" className="text-sm font-medium text-brand-ink underline hover:no-underline">
+            Stuck bookings
+          </Link>
+          <Link href="/admin/delivery/transactions" className="text-sm font-medium text-brand-ink underline hover:no-underline">
+            Financial transactions
+          </Link>
+        </div>
       </div>
 
       <MarkupSettingsForm currentPercentage={currentPercentage} />

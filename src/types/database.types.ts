@@ -1248,6 +1248,39 @@ export type Database = {
           age_minutes: number;
         }[];
       };
+      // Phase 7D. Granted broadly to `authenticated`, is_admin() checked
+      // internally (same pattern as list_stuck_pending_deliveries()) —
+      // the only sanctioned read of provider_delivery_cost_cents/
+      // delivery_markup_percentage_bps/delivery_markup_amount_cents,
+      // now that those columns are excluded from orders' own
+      // column-level SELECT grant for `authenticated` (see
+      // 20261003090000_delivery_financial_privacy.sql). Read-only; every
+      // filter is optional (null = match everything).
+      list_delivery_financial_transactions: {
+        Args: {
+          p_fulfilment_type?: FulfilmentType | null;
+          p_delivery_status?: DeliveryOrderStatus | null;
+          p_payment_status?: PaymentStatus | null;
+          p_provider_slug?: string | null;
+          p_created_after?: string | null;
+          p_created_before?: string | null;
+          p_limit?: number;
+        };
+        Returns: {
+          order_id: string;
+          order_reference: string;
+          created_at: string;
+          fulfilment_type: FulfilmentType;
+          provider_slug: string | null;
+          provider_delivery_cost_cents: number;
+          buyer_delivery_fee_cents: number;
+          delivery_markup_percentage_bps: number;
+          delivery_markup_amount_cents: number;
+          delivery_margin_cents: number;
+          delivery_status: DeliveryOrderStatus | null;
+          payment_status: PaymentStatus | null;
+        }[];
+      };
     };
     Enums: {
       user_role: UserRole;

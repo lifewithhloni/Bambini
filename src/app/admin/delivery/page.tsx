@@ -28,9 +28,14 @@ export default async function AdminStuckDeliveriesPage() {
           Delivery orders reserved but never booked or failed. Nothing here retries automatically — investigate
           directly with the provider before taking any action.
         </p>
-        <Link href="/admin/delivery/settings" className="mt-2 inline-block text-sm font-medium text-brand-ink underline hover:no-underline">
-          Delivery pricing settings
-        </Link>
+        <div className="mt-2 flex gap-3">
+          <Link href="/admin/delivery/transactions" className="text-sm font-medium text-brand-ink underline hover:no-underline">
+            Financial transactions
+          </Link>
+          <Link href="/admin/delivery/settings" className="text-sm font-medium text-brand-ink underline hover:no-underline">
+            Delivery pricing settings
+          </Link>
+        </div>
       </div>
 
       {stuck.length === 0 ? (
