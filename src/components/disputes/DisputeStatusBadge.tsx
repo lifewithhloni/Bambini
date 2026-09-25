@@ -1,10 +1,13 @@
-const STYLES: Record<string, string> = {
-  open: "bg-brand-danger/10 text-brand-danger",
-  under_review: "bg-brand-border text-brand-ink",
-  resolved_buyer: "bg-brand-sage-dark/20 text-brand-sage-dark",
-  resolved_seller: "bg-brand-sage-dark/20 text-brand-sage-dark",
-  resolved_partial: "bg-brand-sage-dark/20 text-brand-sage-dark",
-  closed: "bg-brand-muted/20 text-brand-muted",
+import { Badge } from "@/components/ui/Badge";
+import type { BadgeTone } from "@/lib/ui/variants";
+
+const TONES: Record<string, BadgeTone> = {
+  open: "danger",
+  under_review: "neutral",
+  resolved_buyer: "success",
+  resolved_seller: "success",
+  resolved_partial: "success",
+  closed: "neutral",
 };
 
 const LABELS: Record<string, string> = {
@@ -17,11 +20,7 @@ const LABELS: Record<string, string> = {
 };
 
 export function DisputeStatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STYLES[status] ?? "bg-brand-border text-brand-ink"}`}>
-      {LABELS[status] ?? status}
-    </span>
-  );
+  return <Badge tone={TONES[status] ?? "neutral"}>{LABELS[status] ?? status}</Badge>;
 }
 
 export const DISPUTE_REASON_LABELS: Record<string, string> = {

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { useHideBottomNav } from "@/components/nav/BottomNavVisibility";
 
 /**
  * Next.js's error-boundary convention: catches an uncaught error thrown
@@ -18,18 +20,16 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
   useEffect(() => {
     console.error(error);
   }, [error]);
+  // A standalone error state — BottomNav sits structurally above this
+  // boundary in layout.tsx (see BottomNavVisibility.tsx), so it can't
+  // otherwise know this happened; unhides itself automatically the
+  // moment this component unmounts (a successful reset(), or
+  // navigating away).
+  useHideBottomNav();
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-brand-bg px-6 py-24 text-center">
-      <h1 className="text-xl font-semibold text-brand-ink">Something went wrong</h1>
-      <p className="max-w-sm text-brand-muted">We couldn&apos;t load this page right now. Please try again.</p>
-      <button
-        type="button"
-        onClick={() => reset()}
-        className="rounded-full bg-brand-sage-dark px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-sage"
-      >
-        Try again
-      </button>
+    <div className="flex flex-1 items-center justify-center bg-brand-bg px-6 py-24">
+      <ErrorState description="We couldn't load this page right now. Please try again." onRetry={() => reset()} />
     </div>
   );
 }

@@ -1,13 +1,16 @@
-const STYLES: Record<string, string> = {
-  pending_payment: "bg-brand-border text-brand-ink",
-  confirmed: "bg-brand-sage/30 text-brand-ink",
-  ready_for_collection: "bg-brand-sage/30 text-brand-ink",
-  awaiting_delivery: "bg-brand-sage/30 text-brand-ink",
-  in_transit: "bg-brand-sage/30 text-brand-ink",
-  completed: "bg-brand-sage-dark/20 text-brand-sage-dark",
-  cancelled: "bg-brand-muted/20 text-brand-muted",
-  disputed: "bg-brand-danger/10 text-brand-danger",
-  refunded: "bg-brand-muted/20 text-brand-muted",
+import { Badge } from "@/components/ui/Badge";
+import type { BadgeTone } from "@/lib/ui/variants";
+
+const TONES: Record<string, BadgeTone> = {
+  pending_payment: "neutral",
+  confirmed: "info",
+  ready_for_collection: "info",
+  awaiting_delivery: "info",
+  in_transit: "info",
+  completed: "success",
+  cancelled: "neutral",
+  disputed: "danger",
+  refunded: "neutral",
 };
 
 const LABELS: Record<string, string> = {
@@ -23,22 +26,16 @@ const LABELS: Record<string, string> = {
 };
 
 export function OrderStatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STYLES[status] ?? "bg-brand-border text-brand-ink"}`}
-    >
-      {LABELS[status] ?? status}
-    </span>
-  );
+  return <Badge tone={TONES[status] ?? "neutral"}>{LABELS[status] ?? status}</Badge>;
 }
 
-const PAYMENT_STYLES: Record<string, string> = {
-  pending: "bg-brand-border text-brand-ink",
-  authorized: "bg-brand-sage/30 text-brand-ink",
-  paid: "bg-brand-sage-dark/20 text-brand-sage-dark",
-  failed: "bg-brand-danger/10 text-brand-danger",
-  refunded: "bg-brand-muted/20 text-brand-muted",
-  partially_refunded: "bg-brand-muted/20 text-brand-muted",
+const PAYMENT_TONES: Record<string, BadgeTone> = {
+  pending: "neutral",
+  authorized: "info",
+  paid: "success",
+  failed: "danger",
+  refunded: "neutral",
+  partially_refunded: "neutral",
 };
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -51,11 +48,5 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 export function PaymentStatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${PAYMENT_STYLES[status] ?? "bg-brand-border text-brand-ink"}`}
-    >
-      {PAYMENT_LABELS[status] ?? status}
-    </span>
-  );
+  return <Badge tone={PAYMENT_TONES[status] ?? "neutral"}>{PAYMENT_LABELS[status] ?? status}</Badge>;
 }

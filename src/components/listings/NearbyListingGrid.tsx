@@ -1,4 +1,6 @@
 import { ProductCard } from "./ProductCard";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { MapPin } from "@/components/ui/icons";
 import { formatDistanceKm } from "@/server/search/distance";
 import type { NearbyListingSummary } from "@/server/search/searchNearby";
 
@@ -22,11 +24,7 @@ export function NearbyListingGrid({
   emptyMessage?: string;
 }) {
   if (listings.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-brand-border px-4 py-10 text-center text-sm text-brand-muted">
-        {emptyMessage}
-      </div>
-    );
+    return <EmptyState icon={MapPin} title={emptyMessage} />;
   }
 
   return (

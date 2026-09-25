@@ -1,8 +1,11 @@
-const STYLES: Record<string, string> = {
-  draft: "bg-brand-border text-brand-ink",
-  published: "bg-brand-sage/30 text-brand-ink",
-  archived: "bg-brand-muted/20 text-brand-muted",
-  sold: "bg-brand-sage-dark/20 text-brand-sage-dark",
+import { Badge } from "@/components/ui/Badge";
+import type { BadgeTone } from "@/lib/ui/variants";
+
+const TONES: Record<string, BadgeTone> = {
+  draft: "neutral",
+  published: "success",
+  archived: "neutral",
+  sold: "info",
 };
 
 const LABELS: Record<string, string> = {
@@ -13,11 +16,5 @@ const LABELS: Record<string, string> = {
 };
 
 export function StatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STYLES[status] ?? "bg-brand-border text-brand-ink"}`}
-    >
-      {LABELS[status] ?? status}
-    </span>
-  );
+  return <Badge tone={TONES[status] ?? "neutral"}>{LABELS[status] ?? status}</Badge>;
 }

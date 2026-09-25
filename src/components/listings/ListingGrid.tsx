@@ -1,4 +1,6 @@
 import { ProductCard } from "./ProductCard";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ShoppingBag } from "@/components/ui/icons";
 import type { ListingSummary } from "@/server/search/searchListings";
 
 export function ListingGrid({
@@ -13,11 +15,12 @@ export function ListingGrid({
   emptyMessage?: string;
 }) {
   if (listings.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-brand-border px-4 py-10 text-center text-sm text-brand-muted">
-        {emptyMessage}
-      </div>
-    );
+    // A single caller-supplied sentence, unchanged from before this
+    // phase — every existing call site (page.tsx, NearbyListingGrid's
+    // own sibling pattern) already passes one complete message, so this
+    // keeps that exact contract rather than splitting it into a
+    // title/description pair those callers weren't written for.
+    return <EmptyState icon={ShoppingBag} title={emptyMessage} />;
   }
 
   return (
