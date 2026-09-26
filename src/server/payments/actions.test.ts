@@ -78,6 +78,16 @@ beforeEach(() => {
 });
 
 describe("initiatePayment", () => {
+  it("requires authentication before doing anything else — an unauthenticated caller never reaches the order/payment lookup", async () => {
+    class RedirectSignal extends Error {}
+    requireUserMock.mockImplementation(() => {
+      throw new RedirectSignal("/login");
+    });
+    await expect(initiatePayment("order-1")).rejects.toThrow(RedirectSignal);
+    expect(mockSupabase.client.from).not.toHaveBeenCalled();
+    expect(createCheckoutMock).not.toHaveBeenCalled();
+  });
+
   it("returns an error when the order doesn't exist / doesn't belong to the caller, never leaking which case it was", async () => {
     mockSupabase.queue("orders", { data: null, error: null });
     const result = await initiatePayment("order-1");
@@ -101,15 +111,24 @@ describe("initiatePayment", () => {
 
   it("returns an error when the payment is already paid", async () => {
     mockSupabase.queue("orders", { data: pendingOrder, error: null });
-    mockSupabase.queue("payments", { data: { id: "payment-1", status: "paid" }, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "paid", method: "online" }, error: null });
     const result = await initiatePayment("order-1");
     expect(result).toEqual({ error: "This order has already been paid." });
     expect(createCheckoutMock).not.toHaveBeenCalled();
   });
 
+  it("refuses to initiate a PayFast payment for a cash order — a cash order also starts out pending_payment, same as online, before the seller accepts it", async () => {
+    mockSupabase.queue("orders", { data: pendingOrder, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending", method: "cash" }, error: null });
+    const result = await initiatePayment("order-1");
+    expect(result).toEqual({ error: expect.stringMatching(/cash/i) });
+    expect(createCheckoutMock).not.toHaveBeenCalled();
+    expect(mockSupabase.rpcMock).not.toHaveBeenCalled();
+  });
+
   it("calls the provider with the order's own authoritative amount/currency — never anything client-supplied (there is no client input to this action at all beyond the order id)", async () => {
     mockSupabase.queue("orders", { data: pendingOrder, error: null });
-    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending" }, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending", method: "online" }, error: null });
     mockSupabase.queue("order_items", { data: { title_snapshot: "Stroller" }, error: null });
 
     await initiatePayment("order-1");
@@ -125,7 +144,7 @@ describe("initiatePayment", () => {
 
   it("builds return/cancel/notify URLs from the server's own site URL, never from client input", async () => {
     mockSupabase.queue("orders", { data: pendingOrder, error: null });
-    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending" }, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending", method: "online" }, error: null });
     mockSupabase.queue("order_items", { data: { title_snapshot: "Stroller" }, error: null });
 
     await initiatePayment("order-1");
@@ -138,7 +157,7 @@ describe("initiatePayment", () => {
 
   it("persists the provider reference via record_payment_attempt and returns the checkout session on success", async () => {
     mockSupabase.queue("orders", { data: pendingOrder, error: null });
-    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending" }, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending", method: "online" }, error: null });
     mockSupabase.queue("order_items", { data: { title_snapshot: "Stroller" }, error: null });
 
     const result = await initiatePayment("order-1");
@@ -154,7 +173,7 @@ describe("initiatePayment", () => {
 
   it("returns a safe, generic error if record_payment_attempt fails, never a raw DB error", async () => {
     mockSupabase.queue("orders", { data: pendingOrder, error: null });
-    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending" }, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending", method: "online" }, error: null });
     mockSupabase.queue("order_items", { data: { title_snapshot: "Stroller" }, error: null });
     mockSupabase.rpcMock.mockResolvedValueOnce({ data: null, error: { message: "permission denied" } });
 
@@ -165,7 +184,7 @@ describe("initiatePayment", () => {
 
   it("returns a safe error, mentioning the order reference not raw internals, if the provider itself throws", async () => {
     mockSupabase.queue("orders", { data: pendingOrder, error: null });
-    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending" }, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "pending", method: "online" }, error: null });
     mockSupabase.queue("order_items", { data: { title_snapshot: "Stroller" }, error: null });
     createCheckoutMock.mockRejectedValueOnce(new Error("PAYFAST_MERCHANT_ID is not set"));
 
@@ -176,7 +195,7 @@ describe("initiatePayment", () => {
 
   it("allows re-initiation for a previously failed payment (retry)", async () => {
     mockSupabase.queue("orders", { data: pendingOrder, error: null });
-    mockSupabase.queue("payments", { data: { id: "payment-1", status: "failed" }, error: null });
+    mockSupabase.queue("payments", { data: { id: "payment-1", status: "failed", method: "online" }, error: null });
     mockSupabase.queue("order_items", { data: { title_snapshot: "Stroller" }, error: null });
 
     const result = await initiatePayment("order-1");

@@ -42,12 +42,20 @@ export async function initiatePayment(orderId: string): Promise<InitiatePaymentR
 
   const { data: payment, error: paymentError } = await supabase
     .from("payments")
-    .select("id, status")
+    .select("id, status, method")
     .eq("order_id", orderId)
     .maybeSingle();
 
   if (paymentError || !payment) {
     return { error: "Order not found." };
+  }
+  // A cash order also starts out orders.status = 'pending_payment' (same
+  // as online, before the seller has accepted it) — checked here as a
+  // friendly error alongside record_payment_attempt()'s own authoritative
+  // guard (see 20261010090000_online_payment_method_guard.sql), since
+  // "cash is collection only" must never route through PayFast at all.
+  if (payment.method !== "online") {
+    return { error: "This order is paid by cash on collection, not online." };
   }
   if (payment.status !== "pending" && payment.status !== "failed") {
     return { error: "This order has already been paid." };

@@ -161,6 +161,80 @@ describe("PayFast payment DB functions", () => {
     });
   });
 
+  // Phase 12C: a cash order also starts out orders.status = 'pending_payment'
+  // (identical to an online order, before the seller has accepted it — see
+  // create_order()'s p_payment_method branch,
+  // 20260927090000_cash_collection_transactions.sql). Neither
+  // record_payment_attempt() nor process_payfast_itn() originally checked
+  // payments.method at all, so nothing at the database layer actually
+  // stopped a buyer who navigated directly to /orders/{their-cash-order}/pay
+  // from having a real PayFast checkout attached to a cash-only order (see
+  // 20261010090000_online_payment_method_guard.sql for the fix and full
+  // reasoning).
+  describe("online payment method guard (Phase 12C) — cash orders cannot enter the online payment lifecycle", () => {
+    async function makeEligibleCashSeller(name: string): Promise<string> {
+      const id = await makeUser(db, name);
+      await db.query(
+        `update public.profiles set account_verification = 'verified', identity_verification = 'verified',
+           completed_transaction_count = 5, rating_average = 4.5, account_standing = 'good'
+         where id = $1`,
+        [id],
+      );
+      return id;
+    }
+
+    async function makeCashOrder(seller: string, buyer: string, priceCents = 50000) {
+      const product = await db.query<{ id: string }>(
+        `insert into public.products (seller_type, seller_profile_id, category_id, title, condition, price_cents, status)
+         values ('parent', $1, $2, 'Cash Guard Test Item', 'good', $3, 'published') returning id`,
+        [seller, categoryId, priceCents],
+      );
+      const created = await asUser(db, buyer, () =>
+        db.query<{ order_id: string; order_reference: string }>(
+          `select * from public.create_order($1, 'collection', 'cash')`,
+          [product.rows[0].id],
+        ),
+      );
+      return created.rows[0];
+    }
+
+    it("record_payment_attempt() refuses a cash order even though it's pending_payment, same as an online order would be", async () => {
+      const seller = await makeEligibleCashSeller("Guard Seller 1");
+      const buyer = await makeUser(db, "Guard Buyer 1");
+      const order = await makeCashOrder(seller, buyer);
+
+      await expect(
+        asUser(db, buyer, () => db.query(`select public.record_payment_attempt($1, $2)`, [order.order_id, "ref-cash-1"])),
+      ).rejects.toThrow(/does not use online payment/i);
+
+      await db.query("reset role");
+      const payment = await db.query<{ status: string; provider_reference: string | null }>(
+        `select status, provider_reference from public.payments where order_id = $1`,
+        [order.order_id],
+      );
+      expect(payment.rows[0].status).toBe("pending");
+      expect(payment.rows[0].provider_reference).toBeNull();
+    });
+
+    it("process_payfast_itn() rejects a cash order's ITN as 'rejected_wrong_payment_method', never marking it paid", async () => {
+      const seller = await makeEligibleCashSeller("Guard Seller 2");
+      const buyer = await makeUser(db, "Guard Buyer 2");
+      const order = await makeCashOrder(seller, buyer, 50000);
+
+      await db.query("reset role");
+      const r = await db.query<{ outcome: string }>(
+        `select outcome from public.process_payfast_itn($1, 'forged-cash-ref', 'paid', 50000)`,
+        [order.order_id],
+      );
+      expect(r.rows[0].outcome).toBe("rejected_wrong_payment_method");
+
+      const payment = await db.query<{ status: string }>(`select status from public.payments where order_id = $1`, [order.order_id]);
+      expect(payment.rows[0].status).toBe("pending");
+      const orderRow = await db.query<{ status: string }>(`select status from public.orders where id = $1`, [order.order_id]);
+      expect(orderRow.rows[0].status).toBe("pending_payment");
+    });
+  });
+
   describe("process_payfast_itn() — amount and existence verification", () => {
     it("4. rejects an event for an unknown order", async () => {
       await db.query("reset role");
@@ -484,6 +558,37 @@ describe("PayFast payment DB functions", () => {
       await expect(
         db.query(`update public.payments set provider_reference = 'shared-ref' where order_id = $1`, [orderB.order_id]),
       ).rejects.toThrow(/duplicate key|unique/i);
+    });
+  });
+
+  // Phase 12C brief items W/X: cross-user payment access. payments_select_participant_or_admin
+  // (20260920091500_rls_policies.sql) mirrors orders_select_participant_or_admin exactly — these
+  // tests exercise that policy directly against the payments table itself, rather than only
+  // inferring it from the equivalent orders-table tests in orders.test.ts.
+  describe("payments RLS — cross-user access (W, X)", () => {
+    it("W. the buyer can read their own payment row", async () => {
+      const order = await makeOrder(alice, bob);
+      const r = await asUser(db, bob, () => db.query(`select status, method from public.payments where order_id = $1`, [order.order_id]));
+      expect(r.rows).toHaveLength(1);
+    });
+
+    it("W. an unrelated buyer cannot read another buyer's payment row", async () => {
+      const order = await makeOrder(alice, bob);
+      const r = await asUser(db, carol, () => db.query(`select * from public.payments where order_id = $1`, [order.order_id]));
+      expect(r.rows).toHaveLength(0);
+    });
+
+    it("X. the seller can read the payment for their own listing's order — the same buyer-facing status/method/amount already permitted by the existing architecture, nothing PayFast-secret ever lives in this row", async () => {
+      const order = await makeOrder(alice, bob);
+      const r = await asUser(db, alice, () => db.query(`select status, method, amount_cents from public.payments where order_id = $1`, [order.order_id]));
+      expect(r.rows).toHaveLength(1);
+    });
+
+    it("X. an unrelated seller (not this order's seller) cannot read its payment row", async () => {
+      const order = await makeOrder(alice, bob);
+      const otherSeller = await makeUser(db, "Unrelated Seller");
+      const r = await asUser(db, otherSeller, () => db.query(`select * from public.payments where order_id = $1`, [order.order_id]));
+      expect(r.rows).toHaveLength(0);
     });
   });
 });

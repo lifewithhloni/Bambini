@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { initiatePayment } from "@/server/payments/actions";
 import type { CheckoutSession } from "@/server/payments/types";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
 
 /**
  * The server has already built and signed everything PayFast needs
@@ -48,19 +50,17 @@ export function PayButton({ orderId }: { orderId: string }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={isPending}
-        className="w-full rounded-full bg-brand-sage-dark px-4 py-3 text-sm font-medium text-white hover:bg-brand-sage disabled:opacity-50"
-      >
+      {/* onClick + local isPending, not a plain <form action>, because the
+          server first has to hand back PayFast's own form fields/URL for
+          submitToProvider() to POST the browser to — disabled here (not
+          just visually, via `loading`) is this button's whole protection
+          against a rapid double-click starting two requests; the actual
+          duplicate-payment protection remains server-side (payments.order_id
+          is unique, record_payment_attempt() only ever UPDATEs). */}
+      <Button type="button" variant="primary" size="lg" fullWidth loading={isPending} onClick={handleClick}>
         {isPending ? "Preparing secure payment…" : "Pay with PayFast"}
-      </button>
-      {error && (
-        <p role="alert" className="rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
-          {error}
-        </p>
-      )}
+      </Button>
+      {error && <Alert tone="danger">{error}</Alert>}
     </div>
   );
 }

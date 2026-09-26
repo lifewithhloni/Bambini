@@ -121,6 +121,13 @@ describe("POST /api/payments/payfast/webhook", () => {
     expect(response.status).toBe(400);
   });
 
+  it("returns 400 (not 200) for a 'rejected_wrong_payment_method' outcome — a cash order can never be marked paid through the online path", async () => {
+    verifyWebhookMock.mockResolvedValue(validResult);
+    rpcMock.mockResolvedValue({ data: [{ outcome: "rejected_wrong_payment_method" }], error: null });
+    const response = await POST(makeRequest("..."));
+    expect(response.status).toBe(400);
+  });
+
   it("returns 500 (not a false 200) if the RPC call itself errors", async () => {
     verifyWebhookMock.mockResolvedValue(validResult);
     rpcMock.mockResolvedValue({ data: null, error: { message: "connection reset" } });
@@ -169,6 +176,13 @@ describe("POST /api/payments/payfast/webhook", () => {
     it("never attempts booking for a rejected outcome", async () => {
       verifyWebhookMock.mockResolvedValue(validResult);
       rpcMock.mockResolvedValue({ data: [{ outcome: "rejected_amount_mismatch" }], error: null });
+      await POST(makeRequest("..."));
+      expect(bookDeliveryForOrderMock).not.toHaveBeenCalled();
+    });
+
+    it("never attempts booking for a 'rejected_wrong_payment_method' outcome", async () => {
+      verifyWebhookMock.mockResolvedValue(validResult);
+      rpcMock.mockResolvedValue({ data: [{ outcome: "rejected_wrong_payment_method" }], error: null });
       await POST(makeRequest("..."));
       expect(bookDeliveryForOrderMock).not.toHaveBeenCalled();
     });

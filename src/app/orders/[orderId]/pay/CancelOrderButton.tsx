@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { cancelPendingDeliveryOrder } from "@/server/orders/actions";
+import { Alert } from "@/components/ui/Alert";
 
 function ConfirmedCancelButton() {
   const { pending } = useFormStatus();
@@ -10,7 +11,7 @@ function ConfirmedCancelButton() {
     <button
       type="submit"
       disabled={pending}
-      className="w-full text-center text-sm text-brand-danger hover:underline disabled:opacity-50"
+      className="w-full text-center text-body-small text-brand-danger hover:underline disabled:opacity-50"
     >
       {pending ? "Cancelling…" : "Cancel this order"}
     </button>
@@ -30,11 +31,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
   return (
     <form action={formAction} className="flex flex-col gap-2">
       <ConfirmedCancelButton />
-      {state && "error" in state && (
-        <p role="alert" className="text-center text-sm text-brand-danger">
-          {state.error}
-        </p>
-      )}
+      {state && "error" in state && <Alert tone="danger">{state.error}</Alert>}
     </form>
   );
 }

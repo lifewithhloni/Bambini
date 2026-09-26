@@ -3,6 +3,8 @@ import Link from "next/link";
 import { requireUser } from "@/server/auth/requireUser";
 import { getOrder } from "@/server/orders/getOrder";
 import { formatCentsAsRand } from "@/server/listings/price";
+import { Card } from "@/components/ui/Card";
+import { Alert } from "@/components/ui/Alert";
 import { PayButton } from "./PayButton";
 import { CancelOrderButton } from "./CancelOrderButton";
 
@@ -27,39 +29,47 @@ export default async function PayForOrderPage({
   if (order.payment_status === "paid") {
     redirect(`/account/orders/${orderId}`);
   }
+  // A cash order is never sent here by the normal checkout flow (see
+  // createOrder() in src/server/orders/actions.ts, which redirects a cash
+  // order straight to /account/orders/[id]) — this only guards direct
+  // navigation, redirecting to the order details page instead of showing
+  // a "Pay with PayFast" button that initiatePayment() would refuse
+  // anyway (see 20261010090000_online_payment_method_guard.sql).
+  if (order.payment_method === "cash") {
+    redirect(`/account/orders/${orderId}`);
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-12">
-      <h1 className="text-xl font-semibold text-brand-ink">Pay for your order</h1>
+      <h1 className="text-heading-page text-brand-ink">Pay for your order</h1>
 
       {/* Purely cosmetic — a cancelled-return notice, never treated as
           proof of anything or used to mutate payment state. The
           buyer's browser bouncing through cancel_url doesn't tell us
           anything authoritative; only a verified webhook does. */}
-      {cancelled === "1" && (
-        <p className="rounded-lg bg-brand-border px-3 py-2 text-sm text-brand-ink">
-          Payment was cancelled. You can try again below.
-        </p>
-      )}
+      {cancelled === "1" && <Alert tone="info">Payment was cancelled. You can try again below.</Alert>}
 
-      <div className="flex flex-col gap-1 rounded-lg border border-brand-border bg-white p-3 text-sm">
-        <div className="flex items-center justify-between">
-          <span className="text-brand-muted">Order</span>
-          <span className="text-brand-ink">{order.order_reference}</span>
-        </div>
-        {order.item && (
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-brand-muted">Item</span>
-            <span className="truncate text-brand-ink">{order.item.title}</span>
+      <Card>
+        <div className="flex flex-col gap-1.5 text-body-small">
+          <div className="flex items-center justify-between">
+            <span className="text-brand-muted">Order</span>
+            <span className="text-brand-ink">{order.order_reference}</span>
           </div>
-        )}
-        <div className="flex items-center justify-between font-semibold">
-          <span className="text-brand-ink">Total</span>
-          <span className="text-brand-ink">{formatCentsAsRand(order.total_cents)}</span>
+          {order.item && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-brand-muted">Item</span>
+              <span className="truncate text-brand-ink">{order.item.title}</span>
+            </div>
+          )}
+          <div className="my-1 h-px bg-brand-border" />
+          <div className="flex items-center justify-between text-heading-card">
+            <span className="text-brand-ink">Total</span>
+            <span className="text-brand-ink">{formatCentsAsRand(order.total_cents)}</span>
+          </div>
         </div>
-      </div>
+      </Card>
 
-      <p className="text-xs text-brand-muted">
+      <p className="text-caption text-brand-muted">
         You&apos;ll be redirected to PayFast to complete payment securely. Bambini never sees or stores your card
         details.
       </p>
@@ -73,7 +83,7 @@ export default async function PayForOrderPage({
           or booked order. */}
       {order.fulfilment_type === "delivery" && <CancelOrderButton orderId={orderId} />}
 
-      <Link href={`/account/orders/${orderId}`} className="text-center text-sm text-brand-muted hover:underline">
+      <Link href={`/account/orders/${orderId}`} className="text-center text-body-small text-brand-muted hover:underline">
         Back to order details
       </Link>
     </div>

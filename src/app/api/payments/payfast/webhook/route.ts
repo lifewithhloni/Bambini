@@ -70,7 +70,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (
       outcome === "rejected_not_found" ||
       outcome === "rejected_amount_mismatch" ||
-      outcome === "rejected_invalid_status"
+      outcome === "rejected_invalid_status" ||
+      outcome === "rejected_wrong_payment_method"
     ) {
       console.error(`PayFast ITN rejected for order ${result.merchantReference}: ${outcome}`);
       return NextResponse.json({ error: outcome }, { status: 400 });
