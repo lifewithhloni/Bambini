@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buttonVariants } from "@/lib/ui/variants";
 
 /**
  * Preserves every current query param except `page` when building the
@@ -30,17 +31,17 @@ export function Pagination({
   return (
     <nav aria-label="Pagination" className="flex items-center justify-between gap-4 py-4">
       {page > 1 ? (
-        <Link href={hrefFor(page - 1)} className="rounded-full border border-brand-border px-4 py-2 text-sm text-brand-ink hover:bg-white">
+        <Link href={hrefFor(page - 1)} className={buttonVariants({ variant: "outline", size: "sm" })}>
           ← Previous
         </Link>
       ) : (
         <span />
       )}
-      <span className="text-sm text-brand-muted">
+      <span className="text-body-small text-brand-muted">
         Page {page} of {totalPages}
       </span>
       {page < totalPages ? (
-        <Link href={hrefFor(page + 1)} className="rounded-full border border-brand-border px-4 py-2 text-sm text-brand-ink hover:bg-white">
+        <Link href={hrefFor(page + 1)} className={buttonVariants({ variant: "outline", size: "sm" })}>
           Next →
         </Link>
       ) : (

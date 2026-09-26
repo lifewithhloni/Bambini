@@ -52,8 +52,8 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   ]);
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6">
-      <h1 className="text-xl font-semibold text-brand-ink">{query.q ? `Results for "${query.q}"` : "Search"}</h1>
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6 sm:py-8">
+      <h1 className="text-heading-page text-brand-ink">{query.q ? `Results for "${query.q}"` : "Explore"}</h1>
 
       <FilterForm
         action="/search"
@@ -72,7 +72,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         }}
       />
 
-      <p className="text-sm text-brand-muted">
+      <p className="text-body-small text-brand-muted">
         {result.totalCount} {result.totalCount === 1 ? "listing" : "listings"} found
       </p>
 

@@ -5,6 +5,10 @@ import { getPublicListing } from "@/server/listings/getPublicListing";
 import { getSignedImageUrls } from "@/server/listings/imageUrls";
 import { formatCentsAsRand } from "@/server/listings/price";
 import { ConditionBadge } from "@/components/listings/ConditionBadge";
+import { SellerCard } from "@/components/listings/SellerCard";
+import { Badge } from "@/components/ui/Badge";
+import { ImageOff, ChevronLeft } from "@/components/ui/icons";
+import { buttonVariants } from "@/lib/ui/variants";
 import { getOptionalUser } from "@/server/auth/requireUser";
 import { createClient } from "@/lib/supabase/server";
 
@@ -33,76 +37,73 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-8 sm:py-12">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
+      <Link href="/search" className="inline-flex w-fit items-center gap-1 text-body-small font-medium text-brand-muted hover:text-bambini-forest">
+        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        Back to browsing
+      </Link>
+
       {listing.images.length > 0 ? (
-        <div className="flex snap-x gap-2 overflow-x-auto rounded-lg">
+        <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto rounded-card-lg">
           {listing.images.map((path) =>
             imageUrls[path] ? (
               <Image
                 key={path}
                 src={imageUrls[path]}
                 alt={listing.title}
-                width={480}
-                height={480}
-                className="aspect-square w-full shrink-0 snap-center rounded-lg object-cover"
+                width={640}
+                height={640}
+                className="aspect-square w-full shrink-0 snap-center object-cover"
               />
             ) : null,
           )}
         </div>
       ) : (
-        <div className="flex aspect-square w-full items-center justify-center rounded-lg bg-brand-border text-brand-muted">
-          No photos yet
+        <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-card-lg bg-brand-cream text-brand-muted">
+          <ImageOff className="h-8 w-8" aria-hidden="true" />
+          <span className="text-body-small">No photos yet</span>
         </div>
       )}
 
       <div className="flex flex-col gap-2">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-xl font-semibold text-brand-ink">{listing.title}</h1>
+          <h1 className="text-heading-page text-brand-ink">{listing.title}</h1>
           <ConditionBadge condition={listing.condition} />
         </div>
-        <p className="text-2xl font-semibold text-brand-ink">{formatCentsAsRand(listing.price_cents)}</p>
+        <p className="text-price text-2xl text-brand-ink">{formatCentsAsRand(listing.price_cents)}</p>
         {listing.category && (
-          <Link href={`/category/${listing.category.slug}`} className="text-sm text-brand-muted hover:underline">
+          <Link href={`/category/${listing.category.slug}`} className="text-body-small text-brand-muted hover:text-bambini-forest hover:underline">
             {listing.category.name}
           </Link>
         )}
       </div>
 
-      {listing.description && <p className="whitespace-pre-wrap text-brand-ink">{listing.description}</p>}
+      {listing.description && <p className="whitespace-pre-wrap text-body text-brand-ink">{listing.description}</p>}
 
-      <div className="flex flex-wrap gap-2 text-sm">
-        {listing.collection_available && (
-          <span className="rounded-full bg-brand-sage/20 px-3 py-1 text-brand-ink">Free collection</span>
-        )}
-        {listing.delivery_available && (
-          <span className="rounded-full bg-brand-sage/20 px-3 py-1 text-brand-ink">Delivery available</span>
-        )}
+      <div className="flex flex-wrap gap-2">
+        {listing.collection_available && <Badge tone="success">Free collection</Badge>}
+        {listing.delivery_available && <Badge tone="success">Delivery available</Badge>}
       </div>
 
       {listing.location?.suburb && (
-        <p className="text-sm text-brand-muted">{[listing.location.suburb, listing.location.city].filter(Boolean).join(", ")}</p>
+        <p className="text-body-small text-brand-muted">{[listing.location.suburb, listing.location.city].filter(Boolean).join(", ")}</p>
       )}
 
       {listing.seller && (
-        <div className="flex items-center justify-between rounded-lg border border-brand-border bg-white px-4 py-3">
-          <div>
-            <p className="text-sm font-medium text-brand-ink">{listing.seller.name}</p>
-            {listing.seller.rating_count > 0 && listing.seller.rating_average !== null ? (
-              <p className="text-xs text-brand-muted">
-                {listing.seller.rating_average.toFixed(1)} ★ ({listing.seller.rating_count} review
-                {listing.seller.rating_count === 1 ? "" : "s"})
-              </p>
-            ) : (
-              <p className="text-xs text-brand-muted">No reviews yet</p>
-            )}
-          </div>
-        </div>
+        <SellerCard
+          name={listing.seller.name}
+          avatarUrl={listing.seller.avatarUrl}
+          isVerified={listing.seller.isVerified}
+          ratingAverage={listing.seller.rating_count > 0 ? listing.seller.rating_average : null}
+          ratingCount={listing.seller.rating_count}
+          subtitle={listing.seller.rating_count === 0 ? "No reviews yet" : undefined}
+        />
       )}
 
       {!isOwnListing && (
         <Link
           href={viewer ? `/checkout/${listing.id}` : `/login?next=${encodeURIComponent(`/checkout/${listing.id}`)}`}
-          className="w-full rounded-full bg-brand-sage-dark px-4 py-3 text-center text-sm font-medium text-white hover:bg-brand-sage"
+          className={buttonVariants({ variant: "primary", size: "lg", fullWidth: true })}
         >
           Buy now
         </Link>

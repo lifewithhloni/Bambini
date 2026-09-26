@@ -1,0 +1,58 @@
+-- Phase 11 fix: the public "Verified" seller badge was reading the
+-- wrong column for a parent seller.
+--
+-- Audit finding: profiles has TWO separate verification concepts
+-- (see 20260928090000_identity_account_verification.sql's own header,
+-- quoted here because it's the entire reason this migration exists):
+--
+--   "profiles.account_verification (Phase 0 scaffolding) is retained
+--   (never dropped) but is no longer read by anything
+--   authorization-relevant as of this migration — it becomes a
+--   display-only legacy column."
+--
+-- Real account verification (confirmed email + phone) has been derived
+-- LIVE from auth.users.email_confirmed_at/phone_confirmed_at ever
+-- since Phase 5 (see getVerificationStatus.ts) — profiles.account_verification
+-- is never written to reflect it and is not a meaningful signal of
+-- anything today.
+--
+-- Real identity verification (SA ID + document, admin-reviewed) is
+-- profiles.identity_verification — kept in sync by
+-- sync_profile_identity_verification() (Phase 5) to "the latest
+-- identity_verifications submission's status", and is exactly what
+-- can_transact() actually gates on. This is the correct source for a
+-- public "Verified" badge, and it was NOT previously exposed via
+-- profiles_public at all — getPublicListing() (Phase 11) had no
+-- identity signal to read and used account_verification instead, which
+-- silently produced "verified" for nobody in practice (every real
+-- profile's account_verification sits at its unwritten default) rather
+-- than reflecting actual KYC status.
+--
+-- Business sellers were already correct and need no change:
+-- businesses.verification_status is that side's single authoritative
+-- field (kept in sync by sync_business_verification_status(), Phase 6),
+-- already exposed via businesses_public.verification_status, and
+-- already what enforce_seller_verification_on_publish() and
+-- getPublicListing() itself both gate a business listing on.
+--
+-- Exposure choice: adds the raw verification_status enum (not just a
+-- boolean) to profiles_public, deliberately matching the exact
+-- precedent businesses_public.verification_status already established
+-- — the same enum type, the same "public view" placement, the same
+-- meaning, already shipped and relied on for the business side. Only
+-- the status value itself is exposed here — never the SA ID number,
+-- the document path, the reviewing admin, or review notes, all of
+-- which remain solely on identity_verifications under its existing
+-- owner-or-admin-only RLS, unchanged. The application layer
+-- (getPublicListing.ts) still only ever checks `=== 'verified'` before
+-- this ever reaches a page — pending/rejected/unverified are all
+-- rendered identically (no badge), matching businesses_public's own
+-- existing rendering precedent too.
+-- CREATE OR REPLACE VIEW can only ever APPEND a column, never insert one
+-- mid-list (Postgres treats a positional mismatch as an attempted
+-- rename/drop and refuses) — identity_verification is added at the end
+-- for exactly that reason, not because of any ordering preference.
+create or replace view public.profiles_public
+  with (security_invoker = false) as
+  select id, full_name, avatar_url, role, account_verification, rating_average, rating_count, created_at, identity_verification
+  from public.profiles;

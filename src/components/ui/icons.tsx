@@ -30,4 +30,14 @@ export {
   Info,
   ShoppingBag,
   SlidersHorizontal,
+  // Category shortcuts (Phase 11) — matched by category slug, never a
+  // database field (categories has no icon column); LayoutGrid is the
+  // "All categories" fallback for anything unmatched.
+  Shirt,
+  Baby,
+  ToyBrick,
+  Milk,
+  BedDouble,
+  HeartHandshake,
+  LayoutGrid,
 } from "lucide-react";

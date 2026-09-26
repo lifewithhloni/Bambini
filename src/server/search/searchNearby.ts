@@ -16,6 +16,8 @@ export type NearbyFilters = {
   deliveryOnly?: boolean;
   sort: NearbySortKey;
   page: number;
+  /** Overrides PAGE_SIZE — mirrors searchListings.ts's own override, for a small teaser row (the homepage's "available around you") that wants fewer rows than a full /nearby page without over-fetching (and without running the PostGIS distance calc across a full page it won't display). Pagination math still uses this same size. */
+  pageSize?: number;
 };
 
 export type NearbyListingSummary = {
@@ -63,6 +65,7 @@ const EMPTY_RESULT = (page: number): NearbyResult => ({
  */
 export async function searchNearby(filters: NearbyFilters): Promise<NearbyResult> {
   const supabase = await createClient();
+  const pageSize = filters.pageSize ?? PAGE_SIZE;
 
   const { data, error } = await supabase.rpc("search_nearby_products", {
     buyer_lat: filters.buyerLat,
@@ -75,11 +78,11 @@ export async function searchNearby(filters: NearbyFilters): Promise<NearbyResult
     collection_only: filters.collectionOnly ?? false,
     delivery_only: filters.deliveryOnly ?? false,
     sort_key: filters.sort,
-    page_size: PAGE_SIZE,
-    page_offset: offsetFor(filters.page, PAGE_SIZE),
+    page_size: pageSize,
+    page_offset: offsetFor(filters.page, pageSize),
   });
 
-  if (error || !data) return EMPTY_RESULT(filters.page);
+  if (error || !data) return { ...EMPTY_RESULT(filters.page), pageSize };
 
   const totalCount = data[0]?.total_count ?? 0;
 
@@ -101,7 +104,7 @@ export async function searchNearby(filters: NearbyFilters): Promise<NearbyResult
     })),
     totalCount,
     page: filters.page,
-    pageSize: PAGE_SIZE,
-    totalPages: totalPagesFor(totalCount, PAGE_SIZE),
+    pageSize,
+    totalPages: totalPagesFor(totalCount, pageSize),
   };
 }

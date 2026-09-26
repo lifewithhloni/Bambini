@@ -99,7 +99,10 @@ describe("getPublicListing — the public product-page authorization boundary", 
     });
     mockSupabase.queue("categories", { data: { id: "cat-1", name: "Toys" }, error: null });
     mockSupabase.queue("product_locations_public", { data: null, error: null });
-    mockSupabase.queue("profiles_public", { data: { full_name: "Alice", rating_average: 4.5, rating_count: 3 }, error: null });
+    mockSupabase.queue("profiles_public", {
+      data: { full_name: "Alice", avatar_url: null, identity_verification: "verified", rating_average: 4.5, rating_count: 3 },
+      error: null,
+    });
 
     const listing = await getPublicListing(PUBLISHED_ID);
 
@@ -107,7 +110,112 @@ describe("getPublicListing — the public product-page authorization boundary", 
     expect(listing!.title).toBe("Stroller");
     // sorted by sort_order — proves the app doesn't just pass through raw order
     expect(listing!.images).toEqual([`${PUBLISHED_ID}/a.jpg`, `${PUBLISHED_ID}/b.jpg`]);
-    expect(listing!.seller).toEqual({ name: "Alice", rating_average: 4.5, rating_count: 3 });
+    expect(listing!.seller).toEqual({ name: "Alice", avatarUrl: null, isVerified: true, rating_average: 4.5, rating_count: 3 });
+  });
+
+  it("queries profiles_public for identity_verification, not account_verification — a parent seller's public badge means Bambini's identity check passed, never merely a confirmed email/phone", async () => {
+    mockSupabase.queue("products", {
+      data: {
+        id: PUBLISHED_ID,
+        title: "Stroller",
+        description: null,
+        condition: "good",
+        price_cents: 5000,
+        currency: "ZAR",
+        collection_available: true,
+        delivery_available: false,
+        seller_type: "parent",
+        seller_profile_id: "seller-1",
+        business_id: null,
+        category_id: "cat-1",
+        product_images: [],
+      },
+      error: null,
+    });
+    mockSupabase.queue("categories", { data: null, error: null });
+    mockSupabase.queue("product_locations_public", { data: null, error: null });
+    mockSupabase.queue("profiles_public", {
+      data: { full_name: "Alice", avatar_url: null, identity_verification: "pending", rating_average: null, rating_count: 0 },
+      error: null,
+    });
+
+    const listing = await getPublicListing(PUBLISHED_ID);
+
+    // account_verification is Phase 0 scaffolding, retained but never
+    // read by anything authorization-relevant since Phase 5 (see
+    // 20260928090000_identity_account_verification.sql) — this asserts
+    // the actual SELECT never even names it, so a regression that
+    // brings it back can't silently pass.
+    const profilesPublicCallIndex = (mockSupabase.client.from as ReturnType<typeof vi.fn>).mock.calls.findIndex((call) => call[0] === "profiles_public");
+    const profilesPublicChain = (mockSupabase.client.from as ReturnType<typeof vi.fn>).mock.results[profilesPublicCallIndex].value;
+    expect(profilesPublicChain.select).toHaveBeenCalledWith(expect.stringContaining("identity_verification"));
+    expect(profilesPublicChain.select).not.toHaveBeenCalledWith(expect.stringContaining("account_verification"));
+
+    // A "pending" identity submission (e.g. confirmed email/phone but no
+    // approved KYC yet) must never render as verified.
+    expect(listing!.seller!.isVerified).toBe(false);
+  });
+
+  it("4. a business seller's badge follows businesses_public.verification_status — its own already-correct authoritative field, unchanged by this fix", async () => {
+    mockSupabase.queue("products", {
+      data: {
+        id: PUBLISHED_ID,
+        title: "Cot",
+        description: null,
+        condition: "good",
+        price_cents: 20000,
+        currency: "ZAR",
+        collection_available: true,
+        delivery_available: false,
+        seller_type: "business",
+        seller_profile_id: null,
+        business_id: "biz-1",
+        category_id: "cat-1",
+        product_images: [],
+      },
+      error: null,
+    });
+    mockSupabase.queue("categories", { data: null, error: null });
+    mockSupabase.queue("product_locations_public", { data: null, error: null });
+    mockSupabase.queue("businesses_public", {
+      data: { business_name: "Tiny Toes Co", logo_url: null, verification_status: "verified", rating_average: 4.8, rating_count: 12 },
+      error: null,
+    });
+
+    const listing = await getPublicListing(PUBLISHED_ID);
+
+    expect(listing!.seller).toEqual({ name: "Tiny Toes Co", avatarUrl: null, isVerified: true, rating_average: 4.8, rating_count: 12 });
+  });
+
+  it("an unverified/pending business never renders as verified", async () => {
+    mockSupabase.queue("products", {
+      data: {
+        id: PUBLISHED_ID,
+        title: "Cot",
+        description: null,
+        condition: "good",
+        price_cents: 20000,
+        currency: "ZAR",
+        collection_available: true,
+        delivery_available: false,
+        seller_type: "business",
+        seller_profile_id: null,
+        business_id: "biz-2",
+        category_id: "cat-1",
+        product_images: [],
+      },
+      error: null,
+    });
+    mockSupabase.queue("categories", { data: null, error: null });
+    mockSupabase.queue("product_locations_public", { data: null, error: null });
+    mockSupabase.queue("businesses_public", {
+      data: { business_name: "Unverified Co", logo_url: null, verification_status: "pending", rating_average: null, rating_count: 0 },
+      error: null,
+    });
+
+    const listing = await getPublicListing(PUBLISHED_ID);
+
+    expect(listing!.seller!.isVerified).toBe(false);
   });
 
   it("1. a draft listing cannot be retrieved — as an anonymous visitor would experience it", async () => {

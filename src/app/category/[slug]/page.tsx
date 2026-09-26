@@ -57,16 +57,16 @@ export default async function CategoryPage({
   ]);
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6 sm:py-8">
       <div>
-        <h1 className="text-xl font-semibold text-brand-ink">{category.node.name}</h1>
+        <h1 className="text-heading-page text-brand-ink">{category.node.name}</h1>
         {category.node.children.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
             {category.node.children.map((child) => (
               <Link
                 key={child.id}
                 href={`/category/${child.slug}`}
-                className="rounded-full border border-brand-border bg-white px-3 py-1 text-xs text-brand-ink hover:border-brand-sage-dark"
+                className="rounded-full border border-brand-border bg-brand-surface px-3 py-1 text-caption text-brand-ink transition-colors duration-150 ease-bambini hover:border-bambini-forest"
               >
                 {child.name}
               </Link>
@@ -87,7 +87,7 @@ export default async function CategoryPage({
         }}
       />
 
-      <p className="text-sm text-brand-muted">
+      <p className="text-body-small text-brand-muted">
         {result.totalCount} {result.totalCount === 1 ? "listing" : "listings"} in {category.node.name}
       </p>
 

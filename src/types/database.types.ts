@@ -1066,7 +1066,17 @@ export type Database = {
           full_name: string;
           avatar_url: string | null;
           role: UserRole;
+          // Phase 0 scaffolding, retained but no longer meaningful as of
+          // Phase 5 — never use this for a "verified" badge. See
+          // identity_verification below, and
+          // 20261009090000_public_identity_verification_badge.sql.
           account_verification: VerificationStatus;
+          // Phase 11 fix — the actual, trigger-synced source for a
+          // parent seller's public "Verified" badge (mirrors the latest
+          // identity_verifications submission's status; see
+          // sync_profile_identity_verification() in
+          // 20260928090000_identity_account_verification.sql).
+          identity_verification: VerificationStatus;
           rating_average: number | null;
           rating_count: number;
           created_at: string;

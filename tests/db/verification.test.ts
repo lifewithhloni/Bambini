@@ -231,6 +231,93 @@ describe("identity & account verification", () => {
     });
   });
 
+  /**
+   * Phase 11 fix: getPublicListing()'s public "Verified" seller badge
+   * previously read profiles_public.account_verification — retained but
+   * dead since this very migration's own header comment (Phase 0
+   * scaffolding, "no longer read by anything authorization-relevant").
+   * profiles_public did not even expose identity_verification (the
+   * actually-correct, trigger-synced field) until
+   * 20261009090000_public_identity_verification_badge.sql. These tests
+   * cover that exposure directly, independent of the application-layer
+   * unit tests in getPublicListing.test.ts.
+   */
+  describe("public identity verification badge (profiles_public) — Phase 11 fix", () => {
+    it("1. confirmed email/phone alone (account_verification-shaped data) never implies identity-verified — profiles_public reflects the real identity_verification column", async () => {
+      const user = await makeUser(db, "Account Only Not Identity A", { verified: false });
+      // makeUser({verified:false}) still confirms email/phone (see
+      // harness.ts) but submits no identity_verifications row at all —
+      // exactly "account verified, identity not" in the wild.
+      await db.query("reset role");
+      const row = await asAnon(db, () =>
+        db.query<{ identity_verification: string }>(`select identity_verification from public.profiles_public where id = $1`, [user]),
+      );
+      expect(row.rows[0].identity_verification).not.toBe("verified");
+    });
+
+    it("2. an admin-approved identity submission -> profiles_public.identity_verification = 'verified', publicly readable", async () => {
+      const user = await makeUser(db, "Public Verified Badge A", { verified: false });
+      const admin = await makeAdmin(db, "Public Verified Badge Admin");
+      const submission = await submitIdentity(user, freshIdNumber());
+      await review(admin, submission.rows[0].id, "verified");
+      await db.query("reset role");
+
+      const row = await asAnon(db, () =>
+        db.query<{ identity_verification: string }>(`select identity_verification from public.profiles_public where id = $1`, [user]),
+      );
+      expect(row.rows[0].identity_verification).toBe("verified");
+    });
+
+    it("3. a pending or rejected identity submission never reads as verified via profiles_public", async () => {
+      const pendingUser = await makeUser(db, "Public Pending Badge A", { verified: false });
+      await submitIdentity(pendingUser, freshIdNumber());
+
+      const rejectedUser = await makeUser(db, "Public Rejected Badge A", { verified: false });
+      const admin = await makeAdmin(db, "Public Rejected Badge Admin");
+      const rejectedSubmission = await submitIdentity(rejectedUser, freshIdNumber());
+      await review(admin, rejectedSubmission.rows[0].id, "rejected");
+      await db.query("reset role");
+
+      const pendingRow = await asAnon(db, () =>
+        db.query<{ identity_verification: string }>(`select identity_verification from public.profiles_public where id = $1`, [pendingUser]),
+      );
+      expect(pendingRow.rows[0].identity_verification).toBe("pending");
+      expect(pendingRow.rows[0].identity_verification).not.toBe("verified");
+
+      const rejectedRow = await asAnon(db, () =>
+        db.query<{ identity_verification: string }>(`select identity_verification from public.profiles_public where id = $1`, [rejectedUser]),
+      );
+      expect(rejectedRow.rows[0].identity_verification).toBe("rejected");
+      expect(rejectedRow.rows[0].identity_verification).not.toBe("verified");
+    });
+
+    it("5. profiles_public never exposes the SA ID number, document path, reviewer, or review notes — only the status", async () => {
+      const user = await makeUser(db, "Public No Sensitive Fields A", { verified: false });
+      const admin = await makeAdmin(db, "Public No Sensitive Fields Admin");
+      const submission = await submitIdentity(user, freshIdNumber());
+      await review(admin, submission.rows[0].id, "verified", "internal admin note");
+      await db.query("reset role");
+
+      // profiles_public has no id_number/document_storage_path/reviewed_by/notes
+      // columns at all — selecting one is a query error, not a null/empty
+      // result, proving the view's column list itself excludes them.
+      await expect(db.query(`select id_number from public.profiles_public where id = $1`, [user])).rejects.toThrow(/column .* does not exist/i);
+      await expect(db.query(`select document_storage_path from public.profiles_public where id = $1`, [user])).rejects.toThrow(
+        /column .* does not exist/i,
+      );
+
+      // The actual sensitive row remains exactly as owner-or-admin-only
+      // RLS already protected it (unchanged by this migration) — a
+      // stranger reading identity_verifications directly still gets
+      // nothing, per the existing "5." test elsewhere in this file.
+      const stranger = await makeUser(db, "Public No Sensitive Fields Stranger", { verified: false });
+      const strangerSees = await asUser(db, stranger, () =>
+        db.query(`select id_number, document_storage_path, notes from public.identity_verifications where profile_id = $1`, [user]),
+      );
+      expect(strangerSees.rows).toHaveLength(0);
+    });
+  });
+
   describe("buying — the verification gate in create_order()", () => {
     it("10. a fully verified user can create an order", async () => {
       const seller = await makeUser(db, "Buy Gate Seller A");

@@ -9,6 +9,8 @@ import { getSignedImageUrls } from "@/server/listings/imageUrls";
 import { NearbyListingGrid } from "@/components/listings/NearbyListingGrid";
 import { NearbyFilterForm } from "@/components/search/NearbyFilterForm";
 import { Pagination } from "@/components/search/Pagination";
+import { buttonVariants } from "@/lib/ui/variants";
+import { MapPin } from "@/components/ui/icons";
 
 // Depends entirely on the signed-in caller's own saved location and on
 // currently-published listings — never statically cached, same reasoning
@@ -24,12 +26,12 @@ function firstValue(value: string | string[] | undefined): string | undefined {
 function SetLocationPrompt({ href, label }: { href: string; label: string }) {
   return (
     <div className="mx-auto flex w-full max-w-md flex-col items-center gap-4 px-4 py-16 text-center">
-      <h1 className="text-xl font-semibold text-brand-ink">Nearby</h1>
-      <p className="text-sm text-brand-muted">Set your location to see items near you.</p>
-      <Link
-        href={href}
-        className="rounded-full bg-brand-sage-dark px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-sage"
-      >
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-cream">
+        <MapPin className="h-6 w-6 text-brand-sage-dark" aria-hidden="true" />
+      </div>
+      <h1 className="text-heading-page text-brand-ink">Nearby</h1>
+      <p className="text-body-small text-brand-muted">Set your location to see items near you.</p>
+      <Link href={href} className={buttonVariants({ variant: "primary" })}>
         {label}
       </Link>
     </div>
@@ -101,10 +103,10 @@ export default async function NearbyPage({ searchParams }: { searchParams: Promi
   ]);
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6 sm:py-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-brand-ink">Nearby</h1>
-        <Link href="/account/location" className="text-sm font-medium text-brand-ink hover:underline">
+        <h1 className="text-heading-page text-brand-ink">Nearby</h1>
+        <Link href="/account/location" className="text-body-small font-medium text-bambini-forest hover:underline">
           Change location
         </Link>
       </div>
@@ -122,7 +124,7 @@ export default async function NearbyPage({ searchParams }: { searchParams: Promi
         }}
       />
 
-      <p className="text-sm text-brand-muted">
+      <p className="text-body-small text-brand-muted">
         {result.totalCount} {result.totalCount === 1 ? "listing" : "listings"} within {query.radiusKm} km
       </p>
 

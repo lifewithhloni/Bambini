@@ -1,10 +1,10 @@
 import { SORT_OPTIONS, type SortKey } from "@/server/search/sort";
 import { LISTING_CONDITIONS } from "@/server/listings/validation";
 import { conditionLabel } from "@/components/listings/ConditionBadge";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { buttonVariants } from "@/lib/ui/variants";
 import type { CategoryOption } from "@/components/listings/ListingFormFields";
-
-const inputClass =
-  "w-full rounded-lg border border-brand-border bg-white px-3 py-2 text-sm text-brand-ink placeholder:text-brand-muted focus:border-brand-sage-dark focus:outline-none focus:ring-1 focus:ring-brand-sage-dark";
 
 export type FilterFormValues = {
   q?: string;
@@ -22,7 +22,9 @@ export type FilterFormValues = {
  * bookmarkable URL (no client-side state to lose on refresh), and it
  * works without JavaScript. Server-side validation in
  * src/server/search/validation.ts is what's actually authoritative;
- * this only shapes what the URL looks like.
+ * this only shapes what the URL looks like. Visually restyled for
+ * Phase 11 (Input/Select/design tokens) with the exact same fields and
+ * GET-form mechanics as before.
  */
 export function FilterForm({
   action,
@@ -38,91 +40,67 @@ export function FilterForm({
   categories?: CategoryOption[];
 }) {
   return (
-    <form action={action} method="get" className="flex flex-col gap-3 rounded-lg border border-brand-border bg-white p-3">
+    <form action={action} method="get" className="flex flex-col gap-3 rounded-card bg-brand-surface p-4 shadow-subtle">
       {showSearchInput && (
-        <input
-          type="text"
-          name="q"
-          placeholder="What are you looking for?"
-          defaultValue={values.q}
-          className={inputClass}
-          aria-label="Search"
-        />
+        <Input type="text" name="q" placeholder="What are you looking for?" defaultValue={values.q} aria-label="Search" />
       )}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {showCategorySelect && (
-          <select name="category" defaultValue={values.category ?? ""} className={`${inputClass} col-span-2 sm:col-span-1`}>
+          <Select name="category" defaultValue={values.category ?? ""} aria-label="Category" className="col-span-2 sm:col-span-1">
             <option value="">All categories</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.label}
               </option>
             ))}
-          </select>
+          </Select>
         )}
 
-        <select name="condition" defaultValue={values.condition ?? ""} className={inputClass}>
+        <Select name="condition" defaultValue={values.condition ?? ""} aria-label="Condition">
           <option value="">Any condition</option>
           {LISTING_CONDITIONS.map((c) => (
             <option key={c} value={c}>
               {conditionLabel(c)}
             </option>
           ))}
-        </select>
+        </Select>
 
-        <select name="sort" defaultValue={values.sort ?? "newest"} className={inputClass}>
+        <Select name="sort" defaultValue={values.sort ?? "newest"} aria-label="Sort by">
           {Object.entries(SORT_OPTIONS).map(([key, opt]) => (
             <option key={key} value={key}>
               {opt.label}
             </option>
           ))}
-        </select>
+        </Select>
 
-        <input
-          type="text"
-          inputMode="decimal"
-          name="minPrice"
-          placeholder="Min price (R)"
-          defaultValue={values.minPrice}
-          className={inputClass}
-        />
-        <input
-          type="text"
-          inputMode="decimal"
-          name="maxPrice"
-          placeholder="Max price (R)"
-          defaultValue={values.maxPrice}
-          className={inputClass}
-        />
+        <Input type="text" inputMode="decimal" name="minPrice" placeholder="Min price (R)" defaultValue={values.minPrice} aria-label="Minimum price" />
+        <Input type="text" inputMode="decimal" name="maxPrice" placeholder="Max price (R)" defaultValue={values.maxPrice} aria-label="Maximum price" />
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
-        <label className="flex items-center gap-2 text-sm text-brand-ink">
+        <label className="flex items-center gap-2 text-body-small text-brand-ink">
           <input
             type="checkbox"
             name="collection"
             value="1"
             defaultChecked={values.collection}
-            className="h-4 w-4 rounded border-brand-border text-brand-sage-dark focus:ring-brand-sage-dark"
+            className="h-4 w-4 rounded border-brand-border text-bambini-forest focus-visible:outline-2"
           />
           Collection available
         </label>
-        <label className="flex items-center gap-2 text-sm text-brand-ink">
+        <label className="flex items-center gap-2 text-body-small text-brand-ink">
           <input
             type="checkbox"
             name="delivery"
             value="1"
             defaultChecked={values.delivery}
-            className="h-4 w-4 rounded border-brand-border text-brand-sage-dark focus:ring-brand-sage-dark"
+            className="h-4 w-4 rounded border-brand-border text-bambini-forest focus-visible:outline-2"
           />
           Delivery available
         </label>
 
-        <button
-          type="submit"
-          className="ml-auto rounded-full bg-brand-sage-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-sage"
-        >
+        <button type="submit" className={buttonVariants({ variant: "primary", size: "sm", className: "ml-auto" })}>
           Apply
         </button>
       </div>
