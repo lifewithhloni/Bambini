@@ -20,9 +20,11 @@ function ConfirmedCancelButton() {
 
 /**
  * Phase 7B: only ever rendered for a delivery order that's still
- * pending_payment with no delivery booked yet (see the pay page's own
- * gate) — cancel_pending_delivery_order() re-validates all of that
- * server-side regardless of what this button assumes.
+ * pending_payment with no delivery booked yet — cancel_pending_delivery_order()
+ * re-validates all of that server-side regardless of what a caller assumes.
+ * Shared by /orders/[orderId]/pay and /account/orders/[id] (Phase 12D) —
+ * the same eligibility gate, rendered wherever the buyer might reasonably
+ * look for it, not two separate cancellation implementations.
  */
 export function CancelOrderButton({ orderId }: { orderId: string }) {
   const action = cancelPendingDeliveryOrder.bind(null, orderId);

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getDeliveryTracking } from "@/server/delivery/trackingService";
 
 export type OrderDetail = {
@@ -35,6 +36,11 @@ export type OrderDetail = {
   } | null;
   buyerName: string | null;
   sellerName: string | null;
+  // Same public-safe fields getPublicListing()/getCheckoutListing() already
+  // expose (profiles_public/businesses_public only) — never a private phone
+  // number, ID, or exact address.
+  sellerAvatarUrl: string | null;
+  sellerIsVerified: boolean;
   pickupLocation: { suburb: string | null; city: string | null } | null;
   // Phase 7A: buyer/seller-safe tracking (see trackingService.ts) — null
   // for a collection order, or a delivery order that hasn't been booked
@@ -83,26 +89,53 @@ export async function getOrder(orderId: string): Promise<OrderDetail | null> {
   let coverImagePath: string | null = null;
   let pickupLocation: OrderDetail["pickupLocation"] = null;
   if (orderItem?.product_id) {
-    const [{ data: images }, { data: location }] = await Promise.all([
-      supabase
-        .from("product_images")
-        .select("storage_path, sort_order")
-        .eq("product_id", orderItem.product_id)
-        .order("sort_order", { ascending: true })
-        .limit(1),
-      supabase.from("product_locations_public").select("suburb, city").eq("product_id", orderItem.product_id).maybeSingle(),
+    // orders_select_participant_or_admin RLS already proved the caller is
+    // a genuine participant (buyer/seller/admin) on THIS order — but
+    // product_images_select and product_locations_public (the view the
+    // old code here used) both further restrict to status = 'active'
+    // (== 'published', see 20260921090000_align_listing_labels.sql),
+    // which silently hides a SOLD product's own cover image and pickup
+    // suburb from its own buyer/seller the moment create_order() flips
+    // it to 'sold' — exactly the same class of gap getCartListings.ts
+    // already found and fixed for the cart the same way: the admin
+    // client is used for these two reads specifically, narrowly (the
+    // product id came from this caller's own already-authorized order,
+    // never an arbitrary id, and nothing beyond a cover image path or a
+    // suburb/city is read — the same public-safe data any stranger could
+    // already see while the listing was published).
+    const admin = createAdminClient();
+    const [{ data: images }, { data: product }] = await Promise.all([
+      admin.from("product_images").select("storage_path, sort_order").eq("product_id", orderItem.product_id).order("sort_order", { ascending: true }).limit(1),
+      admin.from("products").select("pickup_location_id").eq("id", orderItem.product_id).maybeSingle(),
     ]);
     coverImagePath = images?.[0]?.storage_path ?? null;
-    pickupLocation = location ?? null;
+    if (product?.pickup_location_id) {
+      const { data: location } = await admin.from("locations").select("suburb, city").eq("id", product.pickup_location_id).maybeSingle();
+      pickupLocation = location ?? null;
+    }
   }
 
   let sellerName: string | null = null;
+  let sellerAvatarUrl: string | null = null;
+  let sellerIsVerified = false;
   if (order.seller_type === "parent" && order.seller_profile_id) {
-    const { data } = await supabase.from("profiles_public").select("full_name").eq("id", order.seller_profile_id).maybeSingle();
+    const { data } = await supabase
+      .from("profiles_public")
+      .select("full_name, avatar_url, identity_verification")
+      .eq("id", order.seller_profile_id)
+      .maybeSingle();
     sellerName = data?.full_name ?? null;
+    sellerAvatarUrl = data?.avatar_url ?? null;
+    sellerIsVerified = data?.identity_verification === "verified";
   } else if (order.seller_type === "business" && order.business_id) {
-    const { data } = await supabase.from("businesses_public").select("business_name").eq("id", order.business_id).maybeSingle();
+    const { data } = await supabase
+      .from("businesses_public")
+      .select("business_name, logo_url, verification_status")
+      .eq("id", order.business_id)
+      .maybeSingle();
     sellerName = data?.business_name ?? null;
+    sellerAvatarUrl = data?.logo_url ?? null;
+    sellerIsVerified = data?.verification_status === "verified";
   }
 
   return {
@@ -134,6 +167,8 @@ export async function getOrder(orderId: string): Promise<OrderDetail | null> {
       : null,
     buyerName: buyerProfile?.full_name ?? null,
     sellerName,
+    sellerAvatarUrl,
+    sellerIsVerified,
     pickupLocation,
     deliveryTracking,
   };

@@ -6,7 +6,7 @@ import { formatCentsAsRand } from "@/server/listings/price";
 import { Card } from "@/components/ui/Card";
 import { Alert } from "@/components/ui/Alert";
 import { PayButton } from "./PayButton";
-import { CancelOrderButton } from "./CancelOrderButton";
+import { CancelOrderButton } from "@/components/orders/CancelOrderButton";
 
 // Depends on the live payment/order state for this specific buyer —
 // never statically cached.

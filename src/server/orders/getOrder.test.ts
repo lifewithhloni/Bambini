@@ -38,6 +38,17 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => mockSupabase.client),
 }));
 
+// getOrder() reads product_images/products/locations via the admin
+// client specifically (see its own doc comment — RLS/the
+// product_locations_public view both hide a SOLD product's image/pickup
+// suburb from its own buyer/seller) — same shared mock client as
+// createClient() so the queue-popping mechanism below still works
+// regardless of which one a given read actually goes through.
+const createAdminClientMock = vi.fn(() => mockSupabase.client);
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: createAdminClientMock,
+}));
+
 const getDeliveryTrackingMock = vi.fn();
 vi.mock("@/server/delivery/trackingService", () => ({
   getDeliveryTracking: getDeliveryTrackingMock,
@@ -68,6 +79,7 @@ const baseOrder = {
 beforeEach(() => {
   mockSupabase = makeSupabaseMock();
   getDeliveryTrackingMock.mockReset();
+  createAdminClientMock.mockClear();
 });
 
 describe("getOrder", () => {
@@ -93,8 +105,9 @@ describe("getOrder", () => {
     mockSupabase.queue("commissions", { data: { settlement_status: "collected_via_payment" }, error: null });
     mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null }); // buyer lookup
     mockSupabase.queue("product_images", { data: [{ storage_path: "product-1/a.jpg", sort_order: 0 }], error: null });
-    mockSupabase.queue("product_locations_public", { data: { suburb: "Gardens", city: "Cape Town" }, error: null });
-    mockSupabase.queue("profiles_public", { data: { full_name: "Alice Seller" }, error: null }); // seller lookup
+    mockSupabase.queue("products", { data: { pickup_location_id: "loc-1" }, error: null });
+    mockSupabase.queue("locations", { data: { suburb: "Gardens", city: "Cape Town" }, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Alice Seller", avatar_url: "https://example.com/a.jpg", identity_verification: "verified" }, error: null }); // seller lookup
 
     const result = await getOrder("order-1");
 
@@ -125,10 +138,45 @@ describe("getOrder", () => {
       },
       buyerName: "Bob Buyer",
       sellerName: "Alice Seller",
+      sellerAvatarUrl: "https://example.com/a.jpg",
+      sellerIsVerified: true,
       pickupLocation: { suburb: "Gardens", city: "Cape Town" },
       deliveryTracking: null,
     });
     expect(getDeliveryTrackingMock).not.toHaveBeenCalled();
+  });
+
+  it("Phase 12D: resolves the cover image and pickup location via the admin client, not the buyer's own session — a SOLD product (status != 'active') is invisible to product_images_select/product_locations_public for anyone but the seller, so a buyer's own order would otherwise silently lose its photo/collection suburb the moment create_order() sells the listing", async () => {
+    mockSupabase.queue("orders", { data: baseOrder, error: null });
+    mockSupabase.queue("order_items", { data: { product_id: "product-1", title_snapshot: "Stroller", price_cents_snapshot: 50000 }, error: null });
+    mockSupabase.queue("payments", { data: { status: "pending", method: "online" }, error: null });
+    mockSupabase.queue("commissions", { data: null, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null });
+    mockSupabase.queue("product_images", { data: [{ storage_path: "product-1/a.jpg", sort_order: 0 }], error: null });
+    mockSupabase.queue("products", { data: { pickup_location_id: "loc-1" }, error: null });
+    mockSupabase.queue("locations", { data: { suburb: "Gardens", city: "Cape Town" }, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Alice Seller" }, error: null });
+
+    const result = await getOrder("order-1");
+
+    expect(createAdminClientMock).toHaveBeenCalled();
+    expect(result?.item?.coverImagePath).toBe("product-1/a.jpg");
+    expect(result?.pickupLocation).toEqual({ suburb: "Gardens", city: "Cape Town" });
+  });
+
+  it("returns pickupLocation: null (never throws) when the product has no pickup_location_id set", async () => {
+    mockSupabase.queue("orders", { data: baseOrder, error: null });
+    mockSupabase.queue("order_items", { data: { product_id: "product-1", title_snapshot: "Stroller", price_cents_snapshot: 50000 }, error: null });
+    mockSupabase.queue("payments", { data: { status: "pending", method: "online" }, error: null });
+    mockSupabase.queue("commissions", { data: null, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null });
+    mockSupabase.queue("product_images", { data: [], error: null });
+    mockSupabase.queue("products", { data: { pickup_location_id: null }, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Alice Seller" }, error: null });
+
+    const result = await getOrder("order-1");
+
+    expect(result?.pickupLocation).toBeNull();
   });
 
   it("Phase 7A: fetches buyer/seller-safe delivery tracking for a delivery order, never for a collection order", async () => {
@@ -162,6 +210,36 @@ describe("getOrder", () => {
 
     expect(result?.sellerName).toBe("Alice's Shop");
     expect(result?.item).toBeNull();
+  });
+
+  it("a business seller's verified badge follows businesses_public.verification_status", async () => {
+    mockSupabase.queue("orders", {
+      data: { ...baseOrder, seller_type: "business", seller_profile_id: null, business_id: "biz-1" },
+      error: null,
+    });
+    mockSupabase.queue("order_items", { data: null, error: null });
+    mockSupabase.queue("payments", { data: { status: "paid", method: "online" }, error: null });
+    mockSupabase.queue("commissions", { data: { settlement_status: "collected_via_payment" }, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null });
+    mockSupabase.queue("businesses_public", { data: { business_name: "Alice's Shop", logo_url: "https://example.com/logo.png", verification_status: "verified" }, error: null });
+
+    const result = await getOrder("order-1");
+
+    expect(result?.sellerAvatarUrl).toBe("https://example.com/logo.png");
+    expect(result?.sellerIsVerified).toBe(true);
+  });
+
+  it("a pending (not yet approved) parent seller identity verification never renders as verified", async () => {
+    mockSupabase.queue("orders", { data: baseOrder, error: null });
+    mockSupabase.queue("order_items", { data: null, error: null });
+    mockSupabase.queue("payments", { data: { status: "pending", method: "online" }, error: null });
+    mockSupabase.queue("commissions", { data: null, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Bob Buyer" }, error: null });
+    mockSupabase.queue("profiles_public", { data: { full_name: "Alice Seller", avatar_url: null, identity_verification: "pending" }, error: null });
+
+    const result = await getOrder("order-1");
+
+    expect(result?.sellerIsVerified).toBe(false);
   });
 
   it("defaults payment_status to 'pending' when no payment row is found", async () => {
