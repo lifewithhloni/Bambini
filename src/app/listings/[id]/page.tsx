@@ -8,7 +8,7 @@ import { ConditionBadge } from "@/components/listings/ConditionBadge";
 import { SellerCard } from "@/components/listings/SellerCard";
 import { Badge } from "@/components/ui/Badge";
 import { ImageOff, ChevronLeft } from "@/components/ui/icons";
-import { buttonVariants } from "@/lib/ui/variants";
+import { AddToCartButton } from "@/components/listings/AddToCartButton";
 import { getOptionalUser } from "@/server/auth/requireUser";
 import { createClient } from "@/lib/supabase/server";
 
@@ -24,16 +24,29 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
 
   const imageUrls = await getSignedImageUrls(listing.images);
 
-  // getPublicListing() deliberately doesn't return seller_profile_id (its
-  // own "public" type never carries raw identifiers) — a small separate
-  // check here, only ever used to decide whether "Buy now" renders, never
-  // the actual purchase authorization (create_order() re-derives and
-  // re-checks this itself regardless — see 20260925090000_orders_checkout.sql).
+  // getPublicListing() deliberately doesn't return seller_profile_id/
+  // business_id (its own "public" type never carries raw identifiers) —
+  // a small separate check here, only ever used to decide whether "Add
+  // to cart" renders, never the actual purchase authorization
+  // (create_order() re-derives and re-checks both parent and business
+  // ownership itself regardless — see
+  // 20260925090000_orders_checkout.sql / 20261002090000_delivery_markup.sql).
+  // Checks business ownership/membership too (owner or staff), matching
+  // is_business_member()'s own two-source definition — not just
+  // seller_profile_id, which is always null for a business listing.
   let isOwnListing = false;
   if (viewer) {
     const supabase = await createClient();
-    const { data: product } = await supabase.from("products").select("seller_profile_id").eq("id", id).maybeSingle();
-    isOwnListing = product?.seller_profile_id === viewer.id;
+    const { data: product } = await supabase.from("products").select("seller_profile_id, business_id").eq("id", id).maybeSingle();
+    if (product?.seller_profile_id === viewer.id) {
+      isOwnListing = true;
+    } else if (product?.business_id) {
+      const [{ data: owned }, { data: member }] = await Promise.all([
+        supabase.from("businesses").select("id").eq("id", product.business_id).eq("owner_profile_id", viewer.id).maybeSingle(),
+        supabase.from("business_members").select("business_id").eq("business_id", product.business_id).eq("profile_id", viewer.id).maybeSingle(),
+      ]);
+      isOwnListing = !!owned || !!member;
+    }
   }
 
   return (
@@ -100,14 +113,7 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
         />
       )}
 
-      {!isOwnListing && (
-        <Link
-          href={viewer ? `/checkout/${listing.id}` : `/login?next=${encodeURIComponent(`/checkout/${listing.id}`)}`}
-          className={buttonVariants({ variant: "primary", size: "lg", fullWidth: true })}
-        >
-          Buy now
-        </Link>
-      )}
+      <AddToCartButton productId={listing.id} disabledReason={isOwnListing ? "This is your own listing." : null} />
     </div>
   );
 }
