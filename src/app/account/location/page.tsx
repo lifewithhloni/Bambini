@@ -6,7 +6,8 @@ import { LocationForm } from "./LocationForm";
 // statically generated/cached (same reasoning as /account itself).
 export const dynamic = "force-dynamic";
 
-export default async function AccountLocationPage() {
+export default async function AccountLocationPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
+  const { next } = await searchParams;
   const user = await requireUser("/account/location");
 
   const supabase = await createClient();
@@ -46,6 +47,12 @@ export default async function AccountLocationPage() {
               }
             : undefined
         }
+        // Only ever an internal checkout path this same page's own
+        // "Set your location" link put there (see
+        // src/app/checkout/[id]/page.tsx) — never followed anywhere
+        // else, so a stray/crafted `next` value can't be turned into an
+        // open redirect.
+        returnTo={next && /^\/checkout\/[^/]+$/.test(next) ? next : undefined}
       />
     </div>
   );

@@ -28,7 +28,14 @@ const ITEMS = [
 // or an onboarding/verification step that should feel like a focused
 // task, not a page inside the browsable marketplace. Matched by exact
 // path or path prefix, same idiom as the active-tab check below.
-const HIDDEN_ON = ["/admin", "/login", "/signup", "/account/verification", "/account/business/new"];
+// Checkout joins this list for Phase 12B: it's a focused, single-purpose
+// task (review -> fulfilment -> payment -> submit) exactly like
+// /account/verification, not a page a buyer should be tempted to tab
+// away from mid-flow — and a fixed bottom tab bar competing with the
+// checkout submit button for the same screen real estate is exactly the
+// "BottomNav should not obscure the checkout CTA" risk the phase brief
+// calls out.
+const HIDDEN_ON = ["/admin", "/login", "/signup", "/account/verification", "/account/business/new", "/checkout"];
 
 function isHiddenRoute(pathname: string): boolean {
   return HIDDEN_ON.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));

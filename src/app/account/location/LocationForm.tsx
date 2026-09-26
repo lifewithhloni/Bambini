@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
+import Link from "next/link";
 import { updateLocation } from "./actions";
 
 const inputClass =
@@ -22,6 +23,7 @@ function SaveButton() {
 
 export function LocationForm({
   defaultValues,
+  returnTo,
 }: {
   defaultValues?: {
     latitude?: number;
@@ -30,6 +32,8 @@ export function LocationForm({
     city?: string;
     province?: string;
   };
+  /** When set (arrived here from checkout needing a delivery location), offer a direct way back after a successful save. */
+  returnTo?: string;
 }) {
   const [state, formAction] = useActionState(updateLocation, null);
 
@@ -120,7 +124,12 @@ export function LocationForm({
       )}
       {state && "success" in state && (
         <p role="status" className="rounded-lg bg-brand-sage/20 px-3 py-2 text-sm text-brand-ink">
-          Location saved.
+          Location saved.{" "}
+          {returnTo && (
+            <Link href={returnTo} className="font-medium underline">
+              Back to checkout
+            </Link>
+          )}
         </p>
       )}
 

@@ -30,6 +30,9 @@ export {
   Info,
   ShoppingBag,
   SlidersHorizontal,
+  CreditCard,
+  Banknote,
+  Clock,
   // Category shortcuts (Phase 11) — matched by category slug, never a
   // database field (categories has no icon column); LayoutGrid is the
   // "All categories" fallback for anything unmatched.
