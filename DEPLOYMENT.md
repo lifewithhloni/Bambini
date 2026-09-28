@@ -85,11 +85,37 @@ sync) and safe to re-run.
 **MANUAL PRODUCTION CONFIGURATION** — actually running
 `supabase db push` (or the CLI's equivalent) against the real production
 project. This development environment has no network path to a real
-Supabase project, so **this migration replay has only been verified
-against PGlite, never against the real hosted Postgres/Storage engine**
-— see DATABASE.md's own "not a substitute for the real Supabase CLI +
-Docker stack" caveat, which applies equally here. Do not skip a final
-`supabase db push` dry-run/review before the real one.
+Supabase project (no `supabase` CLI is even installed here, and no
+project is linked — `supabase/.temp` has no `project-ref`), so **this
+migration replay has only been verified against PGlite, never against
+the real hosted Postgres/Storage engine** — see DATABASE.md's own "not a
+substitute for the real Supabase CLI + Docker stack" caveat, which
+applies equally here. Do not skip a final `supabase db push` dry-run/
+review before the real one.
+
+**MANUAL PRODUCTION CONFIGURATION — seed data.** Migrations alone leave
+a fresh database structurally complete but functionally unusable:
+`supabase/seed.sql` is what actually inserts the category taxonomy, the
+commission rates, the `mock` payment/delivery provider activation rows,
+and the cash-eligibility criteria — without it, listing creation,
+checkout, and cash eligibility all have nothing to reference. Two things
+to do deliberately, not automatically:
+1. Apply `seed.sql`'s statements once against production — **never** via
+   `supabase db reset` (that command drops and recreates the database;
+   it is a local-dev-only operation and must never be pointed at a
+   production project).
+2. Review `payment_providers`/`delivery_providers` before or after
+   seeding: the seed only activates `mock`. Activating `payfast` (and
+   deactivating `mock`) is a separate, deliberate step — see step 11
+   below and [ENVIRONMENT.md](ENVIRONMENT.md#payments)'s note that
+   `PAYMENT_PROVIDER` and `payment_providers.is_active` must be changed
+   together.
+`seed.sql` itself has no `ON CONFLICT` guards — it is written for a
+one-time `db reset` on an empty local database, not for a safe re-run.
+Re-running it as-is against a database that already has this data would
+duplicate categories and error on the unique constraints
+(`commission_rates`, `payment_providers.slug`, etc.) — treat it as a
+single, one-time production step, not something to replay.
 
 ### 4. Storage verification
 **REPOSITORY-VERIFIED** — see [Storage verification](#3-supabase-storage-verification)
