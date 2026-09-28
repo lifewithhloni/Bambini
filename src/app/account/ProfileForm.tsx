@@ -3,20 +3,17 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { updateProfile } from "./actions";
-
-const inputClass =
-  "w-full rounded-lg border border-brand-border bg-white px-3 py-2 text-brand-ink placeholder:text-brand-muted focus:border-brand-sage-dark focus:outline-none focus:ring-1 focus:ring-brand-sage-dark";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { Alert } from "@/components/ui/Alert";
+import { inputVariants } from "@/lib/ui/variants";
 
 function SaveButton() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-full bg-brand-sage-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-sage disabled:opacity-50"
-    >
+    <Button type="submit" variant="primary" size="sm" loading={pending}>
       {pending ? "Saving…" : "Save changes"}
-    </button>
+    </Button>
   );
 }
 
@@ -24,50 +21,29 @@ export function ProfileForm({ fullName, phone }: { fullName: string; phone: stri
   const [state, formAction] = useActionState(updateProfile, null);
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <label htmlFor="fullName" className="text-sm font-medium text-brand-ink">
-          Full name
-        </label>
-        <input
-          id="fullName"
-          name="fullName"
-          type="text"
-          autoComplete="name"
-          defaultValue={fullName}
-          required
-          className={inputClass}
-        />
-      </div>
+    <Card>
+      <form action={formAction} className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="fullName" className="text-body-small font-medium text-brand-ink">
+            Full name
+          </label>
+          <input id="fullName" name="fullName" type="text" autoComplete="name" defaultValue={fullName} required className={inputVariants()} />
+        </div>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="phone" className="text-sm font-medium text-brand-ink">
-          Phone <span className="text-brand-muted">(optional)</span>
-        </label>
-        <input
-          id="phone"
-          name="phone"
-          type="tel"
-          autoComplete="tel"
-          defaultValue={phone ?? ""}
-          className={inputClass}
-        />
-      </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="phone" className="text-body-small font-medium text-brand-ink">
+            Phone <span className="text-brand-muted">(optional)</span>
+          </label>
+          <input id="phone" name="phone" type="tel" autoComplete="tel" defaultValue={phone ?? ""} className={inputVariants()} />
+        </div>
 
-      {state && "error" in state && (
-        <p role="alert" className="rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
-          {state.error}
-        </p>
-      )}
-      {state && "success" in state && (
-        <p role="status" className="rounded-lg bg-brand-sage/20 px-3 py-2 text-sm text-brand-ink">
-          Profile updated.
-        </p>
-      )}
+        {state && "error" in state && <Alert tone="danger">{state.error}</Alert>}
+        {state && "success" in state && <Alert tone="success">Profile updated.</Alert>}
 
-      <div>
-        <SaveButton />
-      </div>
-    </form>
+        <div>
+          <SaveButton />
+        </div>
+      </form>
+    </Card>
   );
 }

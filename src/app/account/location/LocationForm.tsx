@@ -4,20 +4,17 @@ import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { updateLocation } from "./actions";
-
-const inputClass =
-  "w-full rounded-lg border border-brand-border bg-white px-3 py-2 text-brand-ink placeholder:text-brand-muted focus:border-brand-sage-dark focus:outline-none focus:ring-1 focus:ring-brand-sage-dark";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { Alert } from "@/components/ui/Alert";
+import { inputVariants } from "@/lib/ui/variants";
 
 function SaveButton() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-full bg-brand-sage-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-sage disabled:opacity-50"
-    >
+    <Button type="submit" variant="primary" size="sm" loading={pending}>
       {pending ? "Saving…" : "Save location"}
-    </button>
+    </Button>
   );
 }
 
@@ -72,65 +69,54 @@ export function LocationForm({
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2 rounded-lg border border-brand-border bg-white p-3">
-        <p className="text-sm font-medium text-brand-ink">Pinpoint</p>
-        <p className="text-sm text-brand-muted">
-          Used to calculate distance for Nearby and to point buyers to roughly where they&apos;ll collect from —
-          your exact location is never shown to anyone.
-        </p>
-        <button
-          type="button"
-          onClick={captureLocation}
-          disabled={capturing}
-          className="self-start rounded-full border border-brand-sage-dark px-4 py-2 text-sm font-medium text-brand-ink hover:bg-brand-bg disabled:opacity-50"
-        >
-          {capturing ? "Getting your location…" : coords ? "Update my current location" : "Use my current location"}
-        </button>
-        {coords && <p className="text-xs text-brand-muted">Location captured ✓</p>}
-        {captureError && (
-          <p role="alert" className="text-xs text-brand-danger">
-            {captureError}
+      <Card elevation="subtle">
+        <div className="flex flex-col gap-2">
+          <p className="text-body-small font-medium text-brand-ink">Pinpoint</p>
+          <p className="text-body-small text-brand-muted">
+            Used to calculate distance for Nearby and to point buyers to roughly where they&apos;ll collect from — your exact location is never
+            shown to anyone.
           </p>
-        )}
-        <input type="hidden" name="latitude" value={coords?.lat ?? ""} />
-        <input type="hidden" name="longitude" value={coords?.lng ?? ""} />
-      </div>
+          <Button type="button" variant="outline" size="sm" onClick={captureLocation} loading={capturing} className="self-start">
+            {capturing ? "Getting your location…" : coords ? "Update my current location" : "Use my current location"}
+          </Button>
+          {coords && <p className="text-caption text-brand-muted">Location captured ✓</p>}
+          {captureError && <Alert tone="danger">{captureError}</Alert>}
+          <input type="hidden" name="latitude" value={coords?.lat ?? ""} />
+          <input type="hidden" name="longitude" value={coords?.lng ?? ""} />
+        </div>
+      </Card>
 
       <div className="flex flex-col gap-1">
-        <label htmlFor="suburb" className="text-sm font-medium text-brand-ink">
+        <label htmlFor="suburb" className="text-body-small font-medium text-brand-ink">
           Suburb
         </label>
-        <input id="suburb" name="suburb" type="text" required defaultValue={defaultValues?.suburb} className={inputClass} />
+        <input id="suburb" name="suburb" type="text" required defaultValue={defaultValues?.suburb} className={inputVariants()} />
       </div>
 
       <div className="flex flex-col gap-1">
-        <label htmlFor="city" className="text-sm font-medium text-brand-ink">
+        <label htmlFor="city" className="text-body-small font-medium text-brand-ink">
           City
         </label>
-        <input id="city" name="city" type="text" required defaultValue={defaultValues?.city} className={inputClass} />
+        <input id="city" name="city" type="text" required defaultValue={defaultValues?.city} className={inputVariants()} />
       </div>
 
       <div className="flex flex-col gap-1">
-        <label htmlFor="province" className="text-sm font-medium text-brand-ink">
+        <label htmlFor="province" className="text-body-small font-medium text-brand-ink">
           Province <span className="text-brand-muted">(optional)</span>
         </label>
-        <input id="province" name="province" type="text" defaultValue={defaultValues?.province} className={inputClass} />
+        <input id="province" name="province" type="text" defaultValue={defaultValues?.province} className={inputVariants()} />
       </div>
 
-      {state && "error" in state && (
-        <p role="alert" className="rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
-          {state.error}
-        </p>
-      )}
+      {state && "error" in state && <Alert tone="danger">{state.error}</Alert>}
       {state && "success" in state && (
-        <p role="status" className="rounded-lg bg-brand-sage/20 px-3 py-2 text-sm text-brand-ink">
+        <Alert tone="success">
           Location saved.{" "}
           {returnTo && (
             <Link href={returnTo} className="font-medium underline">
               Back to checkout
             </Link>
           )}
-        </p>
+        </Alert>
       )}
 
       <div>
