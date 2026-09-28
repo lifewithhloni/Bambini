@@ -4,8 +4,9 @@
  * buyer orders at /account/orders, and each business at its own
  * /account/business/[id] — the hub links out to those existing areas and
  * never duplicates or merges them. Deliberately contains nothing for
- * saved items, messages, or notifications: no application-level backend
- * exists for any of them yet, so the account experience doesn't pretend.
+ * messages or notifications: no application-level backend exists for
+ * either yet, so the account experience doesn't pretend. Saved items are
+ * real (product_favourites, Phase 14A) and live at /account/saved.
  */
 export const SELLER_LINKS = {
   sell: "/sell",
@@ -16,6 +17,7 @@ export const SELLER_LINKS = {
 } as const;
 
 export const BUYER_ORDERS_HREF = "/account/orders";
+export const SAVED_HREF = "/account/saved";
 export const VERIFICATION_HREF = "/account/verification";
 export const LOCATION_HREF = "/account/location";
 export const BUSINESSES_HREF = "/account/business";

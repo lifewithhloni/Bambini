@@ -10,13 +10,15 @@ const pageSource = readFileSync(join(accountDir, "page.tsx"), "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/^\s*\/\/.*$/gm, "");
 
-// The account experience must stay honest: the schema has
-// product_favourites and message_threads tables, but no application code
-// reads or writes either, so the hub offers no saved-items or messaging
-// surface and never fakes one client-side.
-describe("account hub — no fake favorites, messaging, or notifications", () => {
-  it("does not implement saved items or favourites", () => {
-    expect(pageSource).not.toMatch(/favou?rite|wishlist|saved items/i);
+// The account experience must stay honest: saved items are real (they read
+// product_favourites through the shared server code, and the hub only
+// LINKS to them), while messaging and notifications still have no
+// application-level backend, so the hub offers no surface for either and
+// never fakes one client-side.
+describe("account hub — saved items are linked, never faked; no messaging or notifications", () => {
+  it("P. links to the real saved-items page and never keeps its own favourites state", () => {
+    expect(pageSource).toMatch(/SAVED_HREF/);
+    expect(pageSource).not.toMatch(/product_favourites|useState|wishlist/i);
   });
 
   it("does not implement messaging", () => {

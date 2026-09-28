@@ -457,6 +457,39 @@ export type Database = {
         ];
       };
 
+      // A user's private saved-listings list (Phase 14A). Composite primary
+      // key (profile_id, product_id), owner-only RLS (product_favourites_owner:
+      // profile_id = auth.uid() for both USING and WITH CHECK) — see
+      // 20260920090300_categories_and_products.sql /
+      // 20260920091500_rls_policies.sql. Nothing ever updates a row (a favourite
+      // is either present or absent), so Update is `never`.
+      product_favourites: {
+        Row: {
+          profile_id: string;
+          product_id: string;
+          created_at: string;
+        };
+        Insert: {
+          profile_id: string;
+          product_id: string;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "product_favourites_profile_id_fkey";
+            columns: ["profile_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "product_favourites_product_id_fkey";
+            columns: ["product_id"];
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
       // orders/order_items/payments/commissions: every write goes
       // through create_order() (SECURITY DEFINER — see
       // 20260925090000_orders_checkout.sql), never a direct

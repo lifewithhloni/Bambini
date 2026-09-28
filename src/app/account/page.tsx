@@ -2,14 +2,14 @@ import Link from "next/link";
 import { requireUser } from "@/server/auth/requireUser";
 import { getAccountOverview } from "@/server/account/getAccountOverview";
 import { getVerificationStatus } from "@/server/verification/getVerificationStatus";
-import { BUYER_ORDERS_HREF, BUSINESSES_HREF, LOCATION_HREF, SELLER_LINKS, VERIFICATION_HREF, businessHref } from "@/lib/account/accountLinks";
+import { BUYER_ORDERS_HREF, BUSINESSES_HREF, LOCATION_HREF, SAVED_HREF, SELLER_LINKS, VERIFICATION_HREF, businessHref } from "@/lib/account/accountLinks";
 import { ProfileForm } from "./ProfileForm";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Alert } from "@/components/ui/Alert";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { ChevronRight, MapPin, PackageCheck, PlusCircle, ShoppingBag, Banknote, Check } from "@/components/ui/icons";
+import { ChevronRight, Heart, MapPin, PackageCheck, PlusCircle, ShoppingBag, Banknote, Check } from "@/components/ui/icons";
 import { buttonVariants, type BadgeTone } from "@/lib/ui/variants";
 
 // Identity/account verification state comes from
@@ -89,6 +89,7 @@ export default async function AccountPage() {
       <Card>
         <h2 className="mb-1 text-heading-card text-brand-ink">Buying</h2>
         <LinkRow href={BUYER_ORDERS_HREF} icon={ShoppingBag} label="Your orders" hint="Track purchases and payments" />
+        <LinkRow href={SAVED_HREF} icon={Heart} label="Saved items" hint="Listings you've saved for later" />
       </Card>
 
       <Card>

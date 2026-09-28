@@ -9,6 +9,8 @@ import { SellerCard } from "@/components/listings/SellerCard";
 import { Badge } from "@/components/ui/Badge";
 import { ImageOff, ChevronLeft } from "@/components/ui/icons";
 import { AddToCartButton } from "@/components/listings/AddToCartButton";
+import { FavoriteButton } from "@/components/listings/FavoriteButton";
+import { getFavouriteState } from "@/server/favourites/getFavouriteState";
 import { getOptionalUser } from "@/server/auth/requireUser";
 import { createClient } from "@/lib/supabase/server";
 
@@ -23,6 +25,8 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
   if (!listing) notFound();
 
   const imageUrls = await getSignedImageUrls(listing.images);
+  // The same shared FavoriteButton ProductCard uses — only the viewer's own saved state.
+  const favourites = await getFavouriteState([listing.id]);
 
   // getPublicListing() deliberately doesn't return seller_profile_id/
   // business_id (its own "public" type never carries raw identifiers) —
@@ -90,6 +94,14 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
           </Link>
         )}
       </div>
+
+      <FavoriteButton
+        productId={listing.id}
+        title={listing.title}
+        initiallySaved={favourites.savedIds.has(listing.id)}
+        signedIn={favourites.signedIn}
+        variant="inline"
+      />
 
       {listing.description && <p className="whitespace-pre-wrap text-body text-brand-ink">{listing.description}</p>}
 

@@ -16,13 +16,10 @@ import type { ListingSummary } from "@/server/search/searchListings";
  * status = 'published' — this component has no filtering logic of its
  * own to get wrong.
  *
- * `sellerName`/`isFavorited`/`onToggleFavorite` are all optional and
- * additive — every existing caller (ListingGrid, NearbyListingGrid,
- * search results) keeps working unchanged, since none of them pass
- * these yet. The favourite heart only renders when both `isFavorited`
- * and `onToggleFavorite` are supplied together, so this card never
- * implies a save/favourites feature that doesn't actually exist
- * anywhere in the backend yet.
+ * `sellerName`/`favourite` are optional and additive. `favourite` carries
+ * only the viewer's own initial saved state (from getFavouriteState()) —
+ * the heart it renders is the shared FavoriteButton, so save/unsave logic
+ * lives in one place and the database stays authoritative.
  */
 export function ProductCard({
   listing,
@@ -30,8 +27,7 @@ export function ProductCard({
   categoryName,
   distanceLabel,
   sellerName,
-  isFavorited,
-  onToggleFavorite,
+  favourite,
 }: {
   listing: ListingSummary;
   imageUrl: string | null;
@@ -39,8 +35,7 @@ export function ProductCard({
   /** Pre-formatted (see src/server/search/distance.ts), Nearby-only — never a raw number, never derived here. */
   distanceLabel?: string;
   sellerName?: string;
-  isFavorited?: boolean;
-  onToggleFavorite?: () => void;
+  favourite?: { signedIn: boolean; initiallySaved: boolean; refreshOnChange?: boolean };
 }) {
   return (
     <Link
@@ -62,9 +57,7 @@ export function ProductCard({
             <span className="text-caption">No photo</span>
           </div>
         )}
-        {isFavorited !== undefined && onToggleFavorite && (
-          <FavoriteButton isFavorited={isFavorited} onToggle={onToggleFavorite} label={isFavorited ? `Remove ${listing.title} from saved items` : `Save ${listing.title}`} />
-        )}
+        {favourite && <FavoriteButton productId={listing.id} title={listing.title} initiallySaved={favourite.initiallySaved} signedIn={favourite.signedIn} refreshOnChange={favourite.refreshOnChange} />}
       </div>
       <div className="flex flex-col gap-0.5 px-1 pb-1">
         <p className="truncate text-body-small font-medium text-brand-ink">{listing.title}</p>
