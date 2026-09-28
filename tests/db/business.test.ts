@@ -395,6 +395,39 @@ describe("business seller onboarding & storefront", () => {
       expect(r.rows).toHaveLength(0);
     });
 
+    // Phase 13A brief items C/D: a STAFF member (not the owner) of the
+    // selling business can see the business's own order, but a staff
+    // member of an unrelated business cannot — orders_select_participant_or_admin
+    // (20260920091500_rls_policies.sql) gates on is_business_member(business_id),
+    // the exact same function already proven correct for listing creation
+    // above; this exercises that same function against the orders table
+    // specifically, from a non-owner staff account.
+    it("C. a staff member (not the owner) of the selling business can see the business's own order", async () => {
+      const { businessId } = await makeCashEligibleVerifiedBusinessSeller("Order Biz Owner M", "order-biz-m");
+      const staff = await makeUser(db, "Order Biz Staff M");
+      await db.query(`insert into public.business_members (business_id, profile_id, role) values ($1, $2, 'staff')`, [businessId, staff]);
+      const productId = await makeBusinessProduct(businessId, "Order Toy M", { status: "published" });
+      const buyer = await makeUser(db, "Order Buyer M");
+      const created = await asUser(db, buyer, () => db.query<{ order_id: string }>(`select * from public.create_order($1, 'collection', 'online')`, [productId]));
+
+      const r = await asUser(db, staff, () => db.query(`select id from public.orders where id = $1`, [created.rows[0].order_id]));
+      expect(r.rows).toHaveLength(1);
+    });
+
+    it("D. a staff member of an UNRELATED business cannot see this order", async () => {
+      const { businessId } = await makeCashEligibleVerifiedBusinessSeller("Order Biz Owner N", "order-biz-n");
+      const productId = await makeBusinessProduct(businessId, "Order Toy N", { status: "published" });
+      const buyer = await makeUser(db, "Order Buyer N");
+      const created = await asUser(db, buyer, () => db.query<{ order_id: string }>(`select * from public.create_order($1, 'collection', 'online')`, [productId]));
+
+      const { businessId: otherBusinessId } = await makeCashEligibleVerifiedBusinessSeller("Other Business Owner N", "other-business-n");
+      const otherStaff = await makeUser(db, "Other Business Staff N");
+      await db.query(`insert into public.business_members (business_id, profile_id, role) values ($1, $2, 'staff')`, [otherBusinessId, otherStaff]);
+
+      const r = await asUser(db, otherStaff, () => db.query(`select id from public.orders where id = $1`, [created.rows[0].order_id]));
+      expect(r.rows).toHaveLength(0);
+    });
+
     it("CONFIRMED AND FIXED: decline_cash_order() does not republish a business's listing once the business's own verification has lapsed", async () => {
       const owner = await makeUser(db, "Decline Biz Lapse Owner");
       const businessId = await makeVerifiedBusiness(owner, "Decline Biz Lapse Biz", "decline-biz-lapse-biz");

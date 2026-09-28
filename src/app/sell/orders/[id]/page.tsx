@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/requireUser";
 import { createClient } from "@/lib/supabase/server";
@@ -8,6 +9,7 @@ import { OrderDetailView } from "@/components/orders/OrderDetailView";
 import { CashOrderActions } from "@/components/orders/CashOrderActions";
 import { ConfirmCollectionForm } from "@/components/orders/ConfirmCollectionForm";
 import { DisputeSection } from "@/components/orders/DisputeSection";
+import { ChevronLeft } from "@/components/ui/icons";
 
 // One specific signed-in seller's own order — never statically cached.
 export const dynamic = "force-dynamic";
@@ -51,7 +53,11 @@ export default async function SellerOrderDetailPage({ params }: { params: Promis
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-12">
-      <h1 className="text-xl font-semibold text-brand-ink">Order details</h1>
+      <Link href="/sell/orders" className="inline-flex w-fit items-center gap-1 text-body-small font-medium text-brand-muted hover:text-bambini-forest">
+        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        Back to orders
+      </Link>
+      <h1 className="text-heading-page text-brand-ink">Order details</h1>
       <OrderDetailView order={order} viewerRole="seller" imageUrl={imageUrl} />
 
       <DisputeSection orderId={order.id} orderStatus={order.status} dispute={dispute} viewerRole="seller" />

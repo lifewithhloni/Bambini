@@ -95,9 +95,11 @@ describe("getSellerOrders", () => {
       ],
       error: null,
     });
-    mockSupabase.queue("order_items", { data: [{ order_id: "order-1", title_snapshot: "Stroller" }], error: null });
-    mockSupabase.queue("payments", { data: [{ order_id: "order-1", status: "pending" }], error: null });
+    mockSupabase.queue("order_items", { data: [{ order_id: "order-1", product_id: "product-1", title_snapshot: "Stroller" }], error: null });
+    mockSupabase.queue("payments", { data: [{ order_id: "order-1", status: "pending", method: "online" }], error: null });
     mockSupabase.queue("profiles_public", { data: [{ id: "buyer-1", full_name: "Alice Buyer" }], error: null });
+    mockSupabase.queue("disputes", { data: [], error: null });
+    mockSupabase.queue("product_images", { data: [{ product_id: "product-1", storage_path: "product-1/a.jpg", sort_order: 0 }], error: null });
 
     const result = await getSellerOrders("seller-1");
 
@@ -106,9 +108,66 @@ describe("getSellerOrders", () => {
         id: "order-1",
         productTitle: "Stroller",
         payment_status: "pending",
+        payment_method: "online",
+        coverImagePath: "product-1/a.jpg",
         buyerName: "Alice Buyer",
+        hasActiveDispute: false,
       }),
     ]);
     expect(mockSupabase.fromCalls).toContain("profiles_public");
+  });
+
+  it("hasActiveDispute is true only when an open/under_review dispute exists for that order", async () => {
+    mockSupabase.queue("orders", {
+      data: [
+        {
+          id: "order-1",
+          order_reference: "BMB-AAA111",
+          status: "confirmed",
+          fulfilment_type: "collection",
+          total_cents: 5000,
+          currency: "ZAR",
+          created_at: "2026-01-01T00:00:00Z",
+          buyer_id: "buyer-1",
+        },
+      ],
+      error: null,
+    });
+    mockSupabase.queue("order_items", { data: [], error: null });
+    mockSupabase.queue("payments", { data: [], error: null });
+    mockSupabase.queue("profiles_public", { data: [], error: null });
+    mockSupabase.queue("disputes", { data: [{ order_id: "order-1", status: "open" }], error: null });
+
+    const result = await getSellerOrders("seller-1");
+
+    expect(result[0].hasActiveDispute).toBe(true);
+  });
+
+  it("defaults payment_method to 'online' and coverImagePath to null when nothing joins", async () => {
+    mockSupabase.queue("orders", {
+      data: [
+        {
+          id: "order-2",
+          order_reference: "BMB-BBB222",
+          status: "pending_payment",
+          fulfilment_type: "delivery",
+          total_cents: 2000,
+          currency: "ZAR",
+          created_at: "2026-01-01T00:00:00Z",
+          buyer_id: "buyer-1",
+        },
+      ],
+      error: null,
+    });
+    mockSupabase.queue("order_items", { data: [], error: null });
+    mockSupabase.queue("payments", { data: [], error: null });
+    mockSupabase.queue("profiles_public", { data: [], error: null });
+    mockSupabase.queue("disputes", { data: [], error: null });
+
+    const result = await getSellerOrders("seller-1");
+
+    expect(result[0].payment_method).toBe("online");
+    expect(result[0].coverImagePath).toBeNull();
+    expect(result[0].hasActiveDispute).toBe(false);
   });
 });

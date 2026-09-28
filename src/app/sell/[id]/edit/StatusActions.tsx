@@ -5,13 +5,8 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { changeListingStatus, deleteListing, type StatusActionResult } from "@/server/listings/actions";
 import { canTransition, type ListingStatus } from "@/server/listings/statusTransitions";
-
-const buttonClass =
-  "rounded-full border border-brand-border px-4 py-2 text-sm font-medium text-brand-ink hover:bg-white disabled:opacity-50";
-const primaryButtonClass =
-  "rounded-full bg-brand-sage-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-sage disabled:opacity-50";
-const dangerButtonClass =
-  "rounded-full border border-brand-danger px-4 py-2 text-sm font-medium text-brand-danger hover:bg-brand-danger/10 disabled:opacity-50";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
 
 export function StatusActions({ listingId, status, businessId }: { listingId: string; status: ListingStatus; businessId?: string | null }) {
   const [isPending, startTransition] = useTransition();
@@ -44,7 +39,7 @@ export function StatusActions({ listingId, status, businessId }: { listingId: st
       if ("error" in result) {
         setError(result.error);
       } else {
-        router.push("/sell");
+        router.push("/sell/listings");
       }
     });
   }
@@ -53,59 +48,52 @@ export function StatusActions({ listingId, status, businessId }: { listingId: st
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
         {canTransition(status, "published") && (
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => run(() => changeListingStatus(listingId, "published"))}
-            className={primaryButtonClass}
-          >
+          <Button type="button" variant="primary" size="sm" disabled={isPending} onClick={() => run(() => changeListingStatus(listingId, "published"))}>
             Publish
-          </button>
+          </Button>
         )}
         {canTransition(status, "draft") && (
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => run(() => changeListingStatus(listingId, "draft"))}
-            className={buttonClass}
-          >
+          <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => run(() => changeListingStatus(listingId, "draft"))}>
             {status === "published" ? "Unpublish" : "Restore to draft"}
-          </button>
+          </Button>
         )}
         {canTransition(status, "archived") && (
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={isPending}
             onClick={() => {
               if (confirm("Archive this listing? It will no longer be visible to buyers.")) {
                 run(() => changeListingStatus(listingId, "archived"));
               }
             }}
-            className={buttonClass}
           >
             Archive
-          </button>
+          </Button>
         )}
         {status === "draft" && (
-          <button type="button" disabled={isPending} onClick={runDelete} className={dangerButtonClass}>
+          <Button type="button" variant="destructive" size="sm" disabled={isPending} onClick={runDelete}>
             Delete
-          </button>
+          </Button>
         )}
       </div>
       {error && (
-        <div role="alert" className="flex flex-col gap-2 rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
-          <p>{error}</p>
-          {verificationRequired && (
-            <Link href="/account/verification" className="font-medium underline">
-              Verify your account
-            </Link>
-          )}
-          {businessVerificationRequired && businessId && (
-            <Link href={`/account/business/${businessId}`} className="font-medium underline">
-              Verify your business
-            </Link>
-          )}
-        </div>
+        <Alert tone="danger">
+          <div className="flex flex-col gap-1">
+            <span>{error}</span>
+            {verificationRequired && (
+              <Link href="/account/verification" className="font-medium underline">
+                Verify your account
+              </Link>
+            )}
+            {businessVerificationRequired && businessId && (
+              <Link href={`/account/business/${businessId}`} className="font-medium underline">
+                Verify your business
+              </Link>
+            )}
+          </div>
+        </Alert>
       )}
     </div>
   );

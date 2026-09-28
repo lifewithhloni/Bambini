@@ -195,11 +195,13 @@ export async function createListing(_prev: ListingActionState, formData: FormDat
     const { failed } = await uploadImages(supabase, product.id, files, 0);
     if (failed > 0) {
       revalidatePath("/sell");
+      revalidatePath("/sell/listings");
       redirect(`/sell/${product.id}/edit?photoError=1`);
     }
   }
 
   revalidatePath("/sell");
+  revalidatePath("/sell/listings");
   redirect(`/sell/${product.id}/edit`);
 }
 
@@ -274,6 +276,7 @@ export async function updateListing(
   }
 
   revalidatePath("/sell");
+  revalidatePath("/sell/listings");
   revalidatePath(`/sell/${listingId}/edit`);
   return null;
 }
@@ -341,6 +344,7 @@ export async function changeListingStatus(listingId: string, target: ListingStat
   }
 
   revalidatePath("/sell");
+  revalidatePath("/sell/listings");
   revalidatePath(`/sell/${listingId}/edit`);
   return { success: true };
 }
@@ -375,6 +379,7 @@ export async function deleteListing(listingId: string): Promise<StatusActionResu
   }
 
   revalidatePath("/sell");
+  revalidatePath("/sell/listings");
   return { success: true };
 }
 

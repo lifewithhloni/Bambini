@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/requireUser";
 import { getCategoryOptions } from "@/server/categories/getCategories";
@@ -7,6 +8,8 @@ import { StatusBadge } from "@/components/listings/StatusBadge";
 import { EditListingForm } from "./EditListingForm";
 import { ImageManager } from "./ImageManager";
 import { StatusActions } from "./StatusActions";
+import { Alert } from "@/components/ui/Alert";
+import { ChevronLeft } from "@/components/ui/icons";
 
 export const dynamic = "force-dynamic";
 
@@ -30,21 +33,19 @@ export default async function EditListingPage({
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-12">
+      <Link href="/sell/listings" className="inline-flex w-fit items-center gap-1 text-body-small font-medium text-brand-muted hover:text-bambini-forest">
+        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        Back to listings
+      </Link>
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-2xl font-semibold text-brand-ink">Edit listing</h1>
+        <h1 className="text-heading-page text-brand-ink">Edit listing</h1>
         <StatusBadge status={listing.status} />
       </div>
 
-      {photoError && (
-        <p role="alert" className="rounded-lg bg-brand-danger/10 px-3 py-2 text-sm text-brand-danger">
-          Your listing was created, but one or more photos failed to upload. Try adding them again below.
-        </p>
-      )}
+      {photoError && <Alert tone="danger">Your listing was created, but one or more photos failed to upload. Try adding them again below.</Alert>}
 
       {listing.status === "sold" ? (
-        <p className="rounded-lg bg-brand-sage/20 px-3 py-2 text-sm text-brand-ink">
-          This listing has been sold and can no longer be edited.
-        </p>
+        <Alert tone="info">This listing has been sold and can no longer be edited.</Alert>
       ) : (
         <>
           <StatusActions listingId={listing.id} status={listing.status} businessId={listing.business_id} />

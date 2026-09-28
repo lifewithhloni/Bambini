@@ -7,17 +7,15 @@ import { useFormStatus } from "react-dom";
 import { addListingImages, removeListingImage } from "@/server/listings/actions";
 import { PhotoPicker } from "@/components/listings/PhotoPicker";
 import { MAX_IMAGES_PER_LISTING } from "@/server/listings/imageValidation";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
 
 function AddButton() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-full bg-brand-sage-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-sage disabled:opacity-50"
-    >
+    <Button type="submit" variant="primary" size="sm" loading={pending}>
       {pending ? "Uploading…" : "Add photos"}
-    </button>
+    </Button>
   );
 }
 
@@ -48,12 +46,12 @@ export function ImageManager({
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium text-brand-ink">Photos</h2>
+      <h2 className="text-body-small font-medium text-brand-ink">Photos</h2>
 
       {images.length > 0 && (
         <div className="grid grid-cols-4 gap-2">
           {images.map((img) => (
-            <div key={img.id} className="relative aspect-square overflow-hidden rounded-md bg-brand-bg">
+            <div key={img.id} className="relative aspect-square overflow-hidden rounded-image bg-brand-cream">
               {img.url && <Image src={img.url} alt="" fill className="object-cover" />}
               <button
                 type="button"
@@ -68,12 +66,12 @@ export function ImageManager({
           ))}
         </div>
       )}
-      {removeError && <p className="text-sm text-brand-danger">{removeError}</p>}
+      {removeError && <Alert tone="danger">{removeError}</Alert>}
 
       {images.length < MAX_IMAGES_PER_LISTING && (
         <form action={formAction} className="flex flex-col gap-2">
           <PhotoPicker maxFiles={MAX_IMAGES_PER_LISTING - images.length} />
-          {state?.error && <p className="text-sm text-brand-danger">{state.error}</p>}
+          {state?.error && <Alert tone="danger">{state.error}</Alert>}
           <div>
             <AddButton />
           </div>

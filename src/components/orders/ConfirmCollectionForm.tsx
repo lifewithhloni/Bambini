@@ -3,17 +3,17 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { confirmCollection, type ConfirmCollectionState } from "@/server/orders/actions";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { Alert } from "@/components/ui/Alert";
+import { inputVariants } from "@/lib/ui/variants";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="w-full rounded-full bg-brand-sage-dark px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-sage disabled:opacity-50"
-    >
+    <Button type="submit" variant="primary" fullWidth loading={pending}>
       {pending ? "Confirming…" : "Confirm collection"}
-    </button>
+    </Button>
   );
 }
 
@@ -28,33 +28,31 @@ export function ConfirmCollectionForm({ orderId }: { orderId: string }) {
 
   if (state && "success" in state) {
     return (
-      <div className="rounded-lg border border-brand-border bg-white p-3">
-        <p className="text-sm font-medium text-brand-ink">Collection confirmed. This order is now complete.</p>
-      </div>
+      <Card elevation="subtle">
+        <p className="text-body-small font-medium text-brand-ink">Collection confirmed. This order is now complete.</p>
+      </Card>
     );
   }
 
   return (
-    <form action={formAction} className="flex flex-col gap-2 rounded-lg border border-brand-border bg-white p-3">
-      <label htmlFor="collection-code" className="text-sm font-medium text-brand-ink">
-        Enter the buyer&apos;s collection code
-      </label>
-      <input
-        id="collection-code"
-        name="code"
-        inputMode="numeric"
-        pattern="\d{6}"
-        maxLength={6}
-        placeholder="123456"
-        required
-        className="rounded-lg border border-brand-border px-3 py-2 text-sm tracking-widest text-brand-ink focus:border-brand-sage-dark focus:outline-none"
-      />
-      {state && "error" in state && (
-        <p role="alert" className="rounded-lg bg-brand-danger/10 px-3 py-2 text-xs text-brand-danger">
-          {state.error}
-        </p>
-      )}
-      <SubmitButton />
-    </form>
+    <Card elevation="subtle">
+      <form action={formAction} className="flex flex-col gap-2">
+        <label htmlFor="collection-code" className="text-body-small font-medium text-brand-ink">
+          Enter the buyer&apos;s collection code
+        </label>
+        <input
+          id="collection-code"
+          name="code"
+          inputMode="numeric"
+          pattern="\d{6}"
+          maxLength={6}
+          placeholder="123456"
+          required
+          className={inputVariants({ className: "tracking-widest" })}
+        />
+        {state && "error" in state && <Alert tone="danger">{state.error}</Alert>}
+        <SubmitButton />
+      </form>
+    </Card>
   );
 }
