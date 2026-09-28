@@ -60,6 +60,45 @@ export async function getSellerOrders(userId: string): Promise<SellerOrderSummar
 
   if (error || !orders || orders.length === 0) return [];
 
+  return hydrateSellerOrders(supabase, orders);
+}
+
+/**
+ * Phase 13B: one specific business's own orders — the business-scoped
+ * counterpart to getSellerOrders() (which deliberately aggregates a
+ * user's personal AND every business's orders). The explicit
+ * .eq("business_id") narrows an otherwise multi-business-capable RLS
+ * read (orders_select_participant_or_admin, is_business_member()) down
+ * to the one business a page is about; a businessId the caller isn't a
+ * member of returns zero rows, never an error. Shares every other line of
+ * shaping/hydration with getSellerOrders() rather than duplicating it.
+ */
+export async function getBusinessOrders(businessId: string): Promise<SellerOrderSummary[]> {
+  const supabase = await createClient();
+
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, order_reference, status, fulfilment_type, total_cents, currency, created_at, buyer_id")
+    .eq("business_id", businessId)
+    .order("created_at", { ascending: false });
+
+  if (error || !orders || orders.length === 0) return [];
+
+  return hydrateSellerOrders(supabase, orders);
+}
+
+type SellerOrderRow = {
+  id: string;
+  order_reference: string;
+  status: string;
+  fulfilment_type: string;
+  total_cents: number;
+  currency: string;
+  created_at: string;
+  buyer_id: string;
+};
+
+async function hydrateSellerOrders(supabase: Awaited<ReturnType<typeof createClient>>, orders: SellerOrderRow[]): Promise<SellerOrderSummary[]> {
   const orderIds = orders.map((o) => o.id);
   const buyerIds = Array.from(new Set(orders.map((o) => o.buyer_id)));
 

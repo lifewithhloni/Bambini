@@ -84,6 +84,34 @@ export async function updateBusiness(businessId: string, _prev: BusinessActionSt
   return null;
 }
 
+/**
+ * Owner-only, enforced by business_members_delete_owner_or_admin RLS (the
+ * business's owner_profile_id, or admin) — never by "any member" and never
+ * by business_members.role. A non-owner's delete simply matches 0 rows,
+ * which is reported identically to "not found" so this can't be used to
+ * probe membership. Both ids arrive from this action's own bound
+ * arguments/the row the owner clicked on, but neither is trusted for
+ * authorization: RLS re-derives ownership from auth.uid() regardless.
+ */
+export async function removeBusinessMember(businessId: string, profileId: string): Promise<BusinessActionState> {
+  await requireUser(`/account/business/${businessId}/team`);
+
+  const supabase = await createClient();
+  const { data: removed, error } = await supabase
+    .from("business_members")
+    .delete()
+    .eq("business_id", businessId)
+    .eq("profile_id", profileId)
+    .select("profile_id");
+
+  if (error || !removed || removed.length === 0) {
+    return { error: "Could not remove this team member." };
+  }
+
+  revalidatePath(`/account/business/${businessId}/team`);
+  return null;
+}
+
 function humanizeBusinessError(message?: string): string {
   if (!message) return "Could not create your business. Please try again.";
   if (/businesses_slug_key|duplicate key.*slug/i.test(message)) return "That URL is already taken — choose another.";

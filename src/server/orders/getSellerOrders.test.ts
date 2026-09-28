@@ -44,7 +44,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 let mockSupabase: ReturnType<typeof makeSupabaseMock>;
 
-const { getSellerOrders } = await import("./getSellerOrders");
+const { getSellerOrders, getBusinessOrders } = await import("./getSellerOrders");
 
 beforeEach(() => {
   mockSupabase = makeSupabaseMock();
@@ -169,5 +169,43 @@ describe("getSellerOrders", () => {
     expect(result[0].payment_method).toBe("online");
     expect(result[0].coverImagePath).toBeNull();
     expect(result[0].hasActiveDispute).toBe(false);
+  });
+});
+
+describe("getBusinessOrders (Phase 13B)", () => {
+  it("scopes the orders read to the one business by id — never a broad read filtered afterwards, and never trusting any other id", async () => {
+    mockSupabase.queue("orders", { data: [], error: null });
+    await getBusinessOrders("biz-1");
+    expect(mockSupabase.chains.orders[0].eq).toHaveBeenCalledWith("business_id", "biz-1");
+    expect(mockSupabase.chains.orders[0].or).not.toHaveBeenCalled();
+  });
+
+  it("does not resolve the caller's business memberships itself — RLS (is_business_member) plus the explicit business_id filter are the boundary, and the page has already gated on membership", async () => {
+    mockSupabase.queue("orders", { data: [], error: null });
+    await getBusinessOrders("biz-1");
+    expect(mockSupabase.fromCalls).not.toContain("businesses");
+    expect(mockSupabase.fromCalls).not.toContain("business_members");
+  });
+
+  it("returns [] for a business the caller isn't a member of (RLS yields no rows) or on a query error", async () => {
+    mockSupabase.queue("orders", { data: [], error: null });
+    expect(await getBusinessOrders("someone-elses-biz")).toEqual([]);
+    mockSupabase.queue("orders", { data: null, error: { message: "boom" } });
+    expect(await getBusinessOrders("biz-1")).toEqual([]);
+  });
+
+  it("shapes each order exactly like the personal seller list: buyer's public name only, no commission/delivery-cost/private fields", async () => {
+    mockSupabase.queue("orders", {
+      data: [{ id: "o1", order_reference: "BMB-1", status: "confirmed", fulfilment_type: "collection", total_cents: 9000, currency: "ZAR", created_at: "2026-01-01T00:00:00Z", buyer_id: "b1" }],
+      error: null,
+    });
+    mockSupabase.queue("order_items", { data: [{ order_id: "o1", product_id: "p1", title_snapshot: "Cot" }], error: null });
+    mockSupabase.queue("payments", { data: [{ order_id: "o1", status: "paid", method: "online" }], error: null });
+    mockSupabase.queue("profiles_public", { data: [{ id: "b1", full_name: "Buyer Bee" }], error: null });
+    const [order] = await getBusinessOrders("biz-1");
+    expect(order).toEqual(expect.objectContaining({ id: "o1", buyerName: "Buyer Bee", payment_status: "paid", payment_method: "online" }));
+    expect(Object.keys(order).sort()).toEqual(
+      ["buyerName", "coverImagePath", "created_at", "currency", "fulfilment_type", "hasActiveDispute", "id", "order_reference", "payment_method", "payment_status", "productTitle", "status", "total_cents"].sort(),
+    );
   });
 });

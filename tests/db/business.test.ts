@@ -121,6 +121,65 @@ describe("business seller onboarding & storefront", () => {
       expect(r.affectedRows).toBe(0);
     });
 
+    // Phase 13B: the two authority levels the schema actually enforces are
+    // owner_profile_id and is_business_member() — business_members.role is
+    // a free-text column no policy reads. These prove a STAFF member (a
+    // real business_members row, role 'staff') gets none of the
+    // owner-only settings/team authority, and that owner-only member
+    // removal works, so the team page's owner-only Remove is backed by RLS.
+    it("13B-T1. a staff member (business_members row) cannot edit the business's owner-only settings", async () => {
+      const owner = await makeUser(db, "Settings Owner T1");
+      const staff = await makeUser(db, "Settings Staff T1");
+      const created = await createBusinessAsUser(owner, "Owner Settings", "owner-settings-t1");
+      await db.query(`insert into public.business_members (business_id, profile_id, role) values ($1, $2, 'staff')`, [created.rows[0].id, staff]);
+      const r = await asUser(db, staff, () =>
+        db.query(`update public.businesses set business_name = 'Staff Renamed', description = 'x' where id = $1`, [created.rows[0].id]),
+      );
+      expect(r.affectedRows).toBe(0);
+      await db.query("reset role");
+      const check = await db.query<{ business_name: string }>(`select business_name from public.businesses where id = $1`, [created.rows[0].id]);
+      expect(check.rows[0].business_name).toBe("Owner Settings");
+    });
+
+    it("13B-T2. a staff member cannot remove another team member — only the owner can", async () => {
+      const owner = await makeUser(db, "Team Owner T2");
+      const staffA = await makeUser(db, "Team Staff A T2");
+      const staffB = await makeUser(db, "Team Staff B T2");
+      const created = await createBusinessAsUser(owner, "Team Biz", "team-biz-t2");
+      const businessId = created.rows[0].id;
+      await db.query(`insert into public.business_members (business_id, profile_id, role) values ($1, $2, 'staff'), ($1, $3, 'staff')`, [businessId, staffA, staffB]);
+      const r = await asUser(db, staffA, () => db.query(`delete from public.business_members where business_id = $1 and profile_id = $2`, [businessId, staffB]));
+      expect(r.affectedRows).toBe(0);
+      await db.query("reset role");
+      const check = await db.query(`select 1 from public.business_members where business_id = $1 and profile_id = $2`, [businessId, staffB]);
+      expect(check.rows).toHaveLength(1);
+    });
+
+    it("13B-T3. the owner CAN remove a team member, and that member immediately loses access to the business's orders", async () => {
+      const owner = await makeUser(db, "Team Owner T3");
+      const staff = await makeUser(db, "Team Staff T3");
+      const created = await createBusinessAsUser(owner, "Team Biz Three", "team-biz-t3");
+      const businessId = created.rows[0].id;
+      await db.query(`insert into public.business_members (business_id, profile_id, role) values ($1, $2, 'staff')`, [businessId, staff]);
+      const seen = await asUser(db, staff, () => db.query(`select id from public.businesses where id = $1`, [businessId]));
+      expect(seen.rows).toHaveLength(1);
+      const r = await asUser(db, owner, () => db.query(`delete from public.business_members where business_id = $1 and profile_id = $2`, [businessId, staff]));
+      expect(r.affectedRows).toBe(1);
+      const after = await asUser(db, staff, () => db.query(`select id from public.businesses where id = $1`, [businessId]));
+      expect(after.rows).toHaveLength(0);
+    });
+
+    it("13B-T4. a member of one business cannot read another business's member list", async () => {
+      const ownerA = await makeUser(db, "Members Owner A T4");
+      const ownerB = await makeUser(db, "Members Owner B T4");
+      const staffB = await makeUser(db, "Members Staff B T4");
+      const bizA = (await createBusinessAsUser(ownerA, "Biz A", "biz-a-t4")).rows[0].id;
+      const bizB = (await createBusinessAsUser(ownerB, "Biz B", "biz-b-t4")).rows[0].id;
+      await db.query(`insert into public.business_members (business_id, profile_id, role) values ($1, $2, 'staff')`, [bizB, staffB]);
+      const r = await asUser(db, staffB, () => db.query(`select profile_id from public.business_members where business_id = $1`, [bizA]));
+      expect(r.rows).toHaveLength(0);
+    });
+
     it("7. another user cannot modify business listings", async () => {
       const owner = await makeUser(db, "Listing Owner C");
       const stranger = await makeUser(db, "Listing Stranger C");
@@ -412,6 +471,28 @@ describe("business seller onboarding & storefront", () => {
 
       const r = await asUser(db, staff, () => db.query(`select id from public.orders where id = $1`, [created.rows[0].order_id]));
       expect(r.rows).toHaveLength(1);
+    });
+
+    it("13B-O1. the business owner can see their own business's order", async () => {
+      const { owner, businessId } = await makeCashEligibleVerifiedBusinessSeller("Order Biz Owner O1", "order-biz-o1");
+      const productId = await makeBusinessProduct(businessId, "Order Toy O1", { status: "published" });
+      const buyer = await makeUser(db, "Order Buyer O1");
+      const created = await asUser(db, buyer, () => db.query<{ order_id: string }>(`select * from public.create_order($1, 'collection', 'online')`, [productId]));
+
+      const r = await asUser(db, owner, () => db.query(`select id, business_id from public.orders where id = $1`, [created.rows[0].order_id]));
+      expect(r.rows).toHaveLength(1);
+      expect((r.rows[0] as { business_id: string }).business_id).toBe(businessId);
+    });
+
+    it("13B-O2. an unrelated PERSONAL seller (not a member of the business) cannot read the business's order, so no business route can surface it to them", async () => {
+      const { businessId } = await makeCashEligibleVerifiedBusinessSeller("Order Biz Owner O2", "order-biz-o2");
+      const productId = await makeBusinessProduct(businessId, "Order Toy O2", { status: "published" });
+      const buyer = await makeUser(db, "Order Buyer O2");
+      const created = await asUser(db, buyer, () => db.query<{ order_id: string }>(`select * from public.create_order($1, 'collection', 'online')`, [productId]));
+
+      const personalSeller = await makeUser(db, "Personal Seller O2");
+      const r = await asUser(db, personalSeller, () => db.query(`select id from public.orders where id = $1`, [created.rows[0].order_id]));
+      expect(r.rows).toHaveLength(0);
     });
 
     it("D. a staff member of an UNRELATED business cannot see this order", async () => {

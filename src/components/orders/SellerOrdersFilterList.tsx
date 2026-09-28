@@ -14,7 +14,7 @@ const FILTERS: { key: SellerOrderFilter; label: string }[] = [
 ];
 
 /** Filters purely client-side over the already-fetched, already-authorized order list — same pattern as the buyer-side OrdersFilterList.tsx. */
-export function SellerOrdersFilterList({ orders, imageUrls }: { orders: SellerOrderSummary[]; imageUrls: Record<string, string> }) {
+export function SellerOrdersFilterList({ orders, imageUrls, hrefBase }: { orders: SellerOrderSummary[]; imageUrls: Record<string, string>; hrefBase?: string }) {
   const [filter, setFilter] = useState<SellerOrderFilter>("all");
   const filtered = orders.filter((o) =>
     sellerOrderMatchesFilter({ status: o.status, paymentMethod: o.payment_method, fulfilmentType: o.fulfilment_type, hasActiveDispute: o.hasActiveDispute }, filter),
@@ -35,7 +35,7 @@ export function SellerOrdersFilterList({ orders, imageUrls }: { orders: SellerOr
       ) : (
         <div className="flex flex-col gap-2">
           {filtered.map((order) => (
-            <SellerOrderCard key={order.id} order={order} imageUrl={order.coverImagePath ? (imageUrls[order.coverImagePath] ?? null) : null} />
+            <SellerOrderCard key={order.id} order={order} hrefBase={hrefBase} imageUrl={order.coverImagePath ? (imageUrls[order.coverImagePath] ?? null) : null} />
           ))}
         </div>
       )}

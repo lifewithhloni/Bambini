@@ -12,7 +12,7 @@ import type { SellerOrderSummary } from "@/server/orders/getSellerOrders";
  * the "next action" label is presentation only, never itself an
  * authorization decision.
  */
-export function SellerOrderCard({ order, imageUrl }: { order: SellerOrderSummary; imageUrl: string | null }) {
+export function SellerOrderCard({ order, imageUrl, hrefBase = "/sell/orders" }: { order: SellerOrderSummary; imageUrl: string | null; hrefBase?: string }) {
   const action = getNextSellerOrderAction({
     status: order.status,
     paymentMethod: order.payment_method,
@@ -22,7 +22,7 @@ export function SellerOrderCard({ order, imageUrl }: { order: SellerOrderSummary
 
   return (
     <Link
-      href={`/sell/orders/${order.id}`}
+      href={`${hrefBase}/${order.id}`}
       className="flex gap-3 rounded-card bg-brand-surface p-3 shadow-subtle transition-shadow duration-150 ease-bambini hover:shadow-elevated"
     >
       <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-image bg-brand-cream">
