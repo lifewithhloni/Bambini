@@ -18,6 +18,7 @@ export function BusinessNav({ businessId }: { businessId: string }) {
     { href: base, label: "Dashboard" },
     { href: `${base}/listings`, label: "Listings" },
     { href: `${base}/orders`, label: "Orders" },
+    { href: `${base}/messages`, label: "Messages" },
     { href: `${base}/payouts`, label: "Payouts" },
     { href: `${base}/team`, label: "Team" },
     { href: `${base}/settings`, label: "Settings" },

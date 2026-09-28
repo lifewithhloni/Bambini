@@ -14,15 +14,17 @@ const pageSource = readFileSync(join(accountDir, "page.tsx"), "utf8")
 // product_favourites through the shared server code, and the hub only
 // LINKS to them), while messaging and notifications still have no
 // application-level backend, so the hub offers no surface for either and
-// never fakes one client-side.
-describe("account hub — saved items are linked, never faked; no messaging or notifications", () => {
+// never fakes one client-side. Messaging (Phase 14B) is likewise real: the
+// hub only LINKS to /account/messages and implements none of it itself.
+describe("account hub — saved items and messages are linked, never faked; no notifications", () => {
   it("P. links to the real saved-items page and never keeps its own favourites state", () => {
     expect(pageSource).toMatch(/SAVED_HREF/);
     expect(pageSource).not.toMatch(/product_favourites|useState|wishlist/i);
   });
 
-  it("does not implement messaging", () => {
-    expect(pageSource).not.toMatch(/inbox|conversation|message_threads|\/messages/i);
+  it("links to the real messages inbox but does not implement messaging itself — no queries, no counts, no client state", () => {
+    expect(pageSource).toMatch(/MESSAGES_HREF/);
+    expect(pageSource).not.toMatch(/message_threads|from\("messages"\)|unread|getInbox|useState/i);
   });
 
   it("does not implement notifications or notification preferences", () => {

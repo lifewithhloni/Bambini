@@ -7,11 +7,14 @@ const ITEMS = [
   { href: "/sell", label: "Dashboard" },
   { href: "/sell/listings", label: "Listings" },
   { href: "/sell/orders", label: "Orders" },
+  { href: "/account/messages", label: "Messages" },
   { href: "/sell/payouts", label: "Payouts" },
 ] as const;
 
 /**
- * A secondary, in-page nav for moving between the four seller sections —
+ * A secondary, in-page nav for moving between the seller sections (Messages
+ * is the personal inbox at /account/messages — one inbox for the buyer and
+ * seller sides of a person's conversations, with no counts shown) —
  * distinct from BottomNav (which already has its own "Sell" tab pointing
  * at /sell and stays as the global mobile nav; this never duplicates or
  * competes with it). Shown only on the section-level pages

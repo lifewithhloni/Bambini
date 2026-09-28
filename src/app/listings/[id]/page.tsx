@@ -11,6 +11,8 @@ import { ImageOff, ChevronLeft } from "@/components/ui/icons";
 import { AddToCartButton } from "@/components/listings/AddToCartButton";
 import { FavoriteButton } from "@/components/listings/FavoriteButton";
 import { getFavouriteState } from "@/server/favourites/getFavouriteState";
+import { MessageSellerForm } from "@/components/messaging/MessageSellerForm";
+import { getMyThreadForProduct } from "@/server/messaging/getMyThreadForProduct";
 import { getOptionalUser } from "@/server/auth/requireUser";
 import { createClient } from "@/lib/supabase/server";
 
@@ -52,6 +54,8 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
       isOwnListing = !!owned || !!member;
     }
   }
+
+  const existingThreadId = viewer && !isOwnListing ? await getMyThreadForProduct(id) : null;
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -126,6 +130,9 @@ export default async function ListingPage({ params }: { params: Promise<{ id: st
       )}
 
       <AddToCartButton productId={listing.id} disabledReason={isOwnListing ? "This is your own listing." : null} />
+
+      {/* No functional CTA for the listing's own seller (personal, or a business owner/member); startConversation() also refuses it server-side. */}
+      {!isOwnListing && <MessageSellerForm productId={listing.id} signedIn={!!viewer} existingThreadId={existingThreadId} />}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUSINESSES_HREF, BUYER_ORDERS_HREF, LOCATION_HREF, SAVED_HREF, SELLER_LINKS, VERIFICATION_HREF, businessHref } from "./accountLinks";
+import { BUSINESSES_HREF, BUYER_ORDERS_HREF, LOCATION_HREF, MESSAGES_HREF, SAVED_HREF, SELLER_LINKS, VERIFICATION_HREF, businessHref } from "./accountLinks";
 
 describe("account hub link targets", () => {
   it("every personal-selling entry point leads into the existing /sell area — the hub never duplicates seller functionality", () => {
@@ -29,8 +29,12 @@ describe("account hub link targets", () => {
     expect(SAVED_HREF).toBe("/account/saved");
   });
 
-  it("no messaging or notification destination exists here — neither has an application-level backend yet", () => {
-    const all = [...Object.values(SELLER_LINKS), BUYER_ORDERS_HREF, SAVED_HREF, VERIFICATION_HREF, LOCATION_HREF, BUSINESSES_HREF, businessHref("x")].join(" ");
-    expect(all).not.toMatch(/inbox|message|notification/i);
+  it("messages point to the personal inbox /account/messages — a real feature backed by message_threads", () => {
+    expect(MESSAGES_HREF).toBe("/account/messages");
+  });
+
+  it("no notification destination exists here — there is no application-level backend for it", () => {
+    const all = [...Object.values(SELLER_LINKS), BUYER_ORDERS_HREF, SAVED_HREF, MESSAGES_HREF, VERIFICATION_HREF, LOCATION_HREF, BUSINESSES_HREF, businessHref("x")].join(" ");
+    expect(all).not.toMatch(/notification/i);
   });
 });

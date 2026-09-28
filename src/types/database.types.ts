@@ -457,6 +457,70 @@ export type Database = {
         ];
       };
 
+      // Buyer <-> seller/business conversations (Phase 14B). Threads are only
+      // ever CREATED by a buyer about a currently published listing whose
+      // seller matches the thread's seller columns (message_threads_insert_buyer_about_listing,
+      // 20261012090000_messaging_hardening.sql); nothing ever updates one
+      // from the client (last_message_at is trigger-maintained), so Update
+      // is `never`. One thread per (buyer_id, product_id).
+      message_threads: {
+        Row: {
+          id: string;
+          product_id: string | null;
+          buyer_id: string;
+          seller_type: "parent" | "business";
+          seller_profile_id: string | null;
+          business_id: string | null;
+          created_at: string;
+          last_message_at: string;
+        };
+        Insert: {
+          product_id: string;
+          buyer_id: string;
+          seller_type: "parent" | "business";
+          seller_profile_id?: string | null;
+          business_id?: string | null;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "message_threads_product_id_fkey";
+            columns: ["product_id"];
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // The only client-writable columns are thread_id/sender_id/body on
+      // insert and read_at on update (recipient only) — created_at, read_at
+      // on insert, and every other column are database-authoritative
+      // (column grants, 20261012090000_messaging_hardening.sql).
+      messages: {
+        Row: {
+          id: string;
+          thread_id: string;
+          sender_id: string;
+          body: string;
+          read_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          thread_id: string;
+          sender_id: string;
+          body: string;
+        };
+        Update: Partial<{ read_at: string }>;
+        Relationships: [
+          {
+            foreignKeyName: "messages_thread_id_fkey";
+            columns: ["thread_id"];
+            referencedRelation: "message_threads";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
       // A user's private saved-listings list (Phase 14A). Composite primary
       // key (profile_id, product_id), owner-only RLS (product_favourites_owner:
       // profile_id = auth.uid() for both USING and WITH CHECK) — see
