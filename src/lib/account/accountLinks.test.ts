@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUSINESSES_HREF, BUYER_ORDERS_HREF, LOCATION_HREF, MESSAGES_HREF, SAVED_HREF, SELLER_LINKS, VERIFICATION_HREF, businessHref } from "./accountLinks";
+import { BUSINESSES_HREF, BUYER_ORDERS_HREF, LOCATION_HREF, MESSAGES_HREF, NOTIFICATIONS_HREF, SAVED_HREF, SELLER_LINKS, VERIFICATION_HREF, businessHref } from "./accountLinks";
 
 describe("account hub link targets", () => {
   it("every personal-selling entry point leads into the existing /sell area — the hub never duplicates seller functionality", () => {
@@ -33,8 +33,7 @@ describe("account hub link targets", () => {
     expect(MESSAGES_HREF).toBe("/account/messages");
   });
 
-  it("no notification destination exists here — there is no application-level backend for it", () => {
-    const all = [...Object.values(SELLER_LINKS), BUYER_ORDERS_HREF, SAVED_HREF, MESSAGES_HREF, VERIFICATION_HREF, LOCATION_HREF, BUSINESSES_HREF, businessHref("x")].join(" ");
-    expect(all).not.toMatch(/notification/i);
+  it("notifications point to /account/notifications — a real feature backed by the notifications table", () => {
+    expect(NOTIFICATIONS_HREF).toBe("/account/notifications");
   });
 });

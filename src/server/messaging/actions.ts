@@ -110,7 +110,17 @@ export async function markThreadRead(threadId: string): Promise<void> {
   if (!user || !UUID_PATTERN.test(threadId)) return;
 
   const supabase = await createClient();
-  await supabase.from("messages").update({ read_at: new Date().toISOString() }).eq("thread_id", threadId).neq("sender_id", user.id).is("read_at", null);
+  const readAt = new Date().toISOString();
+  await supabase.from("messages").update({ read_at: readAt }).eq("thread_id", threadId).neq("sender_id", user.id).is("read_at", null);
+  // Reading the conversation also clears this user's own "new message"
+  // notification for it (their own row only: profile_id filter + RLS).
+  await supabase
+    .from("notifications")
+    .update({ read_at: readAt })
+    .eq("profile_id", user.id)
+    .eq("type", "message_received")
+    .eq("data->>thread_id", threadId)
+    .is("read_at", null);
 
-  revalidatePath("/account/messages");
+  revalidatePath("/", "layout");
 }

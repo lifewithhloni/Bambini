@@ -457,6 +457,29 @@ export type Database = {
         ];
       };
 
+      // In-app notifications (Phase 14C). Rows are only ever created by the
+      // database's own producer triggers (20261013090000_in_app_notifications.sql)
+      // — never by a client — so Insert is `never`. The only client write is
+      // marking one's own notification read (column grant on read_at; the
+      // timestamp itself is set by a trigger). `data` holds opaque reference
+      // ids only; the deep link is derived by notificationHref().
+      notifications: {
+        Row: {
+          id: string;
+          profile_id: string;
+          type: string;
+          title: string;
+          body: string | null;
+          data: Record<string, unknown>;
+          event_key: string;
+          read_at: string | null;
+          created_at: string;
+        };
+        Insert: never;
+        Update: Partial<{ read_at: string }>;
+        Relationships: [];
+      };
+
       // Buyer <-> seller/business conversations (Phase 14B). Threads are only
       // ever CREATED by a buyer about a currently published listing whose
       // seller matches the thread's seller columns (message_threads_insert_buyer_about_listing,

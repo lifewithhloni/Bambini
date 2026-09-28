@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getOptionalUser } from "@/server/auth/requireUser";
 import { LogoutButton } from "./LogoutButton";
 import { CartCount } from "./cart/CartCount";
+import { NotificationBell } from "./notifications/NotificationBell";
 
 export async function SiteHeader() {
   const user = await getOptionalUser();
@@ -27,6 +28,7 @@ export async function SiteHeader() {
         <CartCount />
         {user ? (
           <>
+            <NotificationBell userId={user.id} />
             <Link href="/sell" className="hidden text-body-small font-medium text-brand-ink hover:text-bambini-forest sm:inline">
               Sell
             </Link>
