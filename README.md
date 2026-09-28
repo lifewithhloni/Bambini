@@ -19,6 +19,10 @@ built and what's next.
 - [DECISIONS.md](DECISIONS.md) — why things are built the way they are,
   and open decisions that need input.
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) — phased build plan.
+- [DEPLOYMENT.md](DEPLOYMENT.md) — production deployment runbook, with
+  every dashboard-only step explicitly labelled.
+- [SMOKE_TESTS.md](SMOKE_TESTS.md) — the checklist to run after a
+  deployment, split into sandbox/read-only/real-transaction tests.
 
 ## Getting started
 
