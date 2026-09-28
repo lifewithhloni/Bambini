@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PayFastProvider, isValidPayFastSenderHost } from "@/server/payments/providers/payfast/payfast";
 import { bookDeliveryForOrder } from "@/server/delivery/bookingService";
+import { reportOperationalFailure } from "@/lib/monitoring/reportOperationalFailure";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (!result.valid) {
       console.error(`PayFast ITN rejected: ${result.reason}`);
+      reportOperationalFailure({ area: "payfast_webhook", reason: `rejected: ${result.reason}` });
       return NextResponse.json({ error: "invalid" }, { status: 400 });
     }
 
@@ -45,11 +47,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const senderHost = request.headers.get("referer") ?? request.headers.get("origin");
     if (!isValidPayFastSenderHost(senderHost)) {
       console.error(`PayFast ITN rejected: unrecognized sender host "${senderHost ?? "(none)"}"`);
+      reportOperationalFailure({ area: "payfast_webhook", reason: "rejected: unrecognized sender host" });
       return NextResponse.json({ error: "invalid" }, { status: 400 });
     }
 
     if (!isUuid(result.merchantReference)) {
       console.error("PayFast ITN rejected: merchant reference is not a recognizable order id");
+      reportOperationalFailure({ area: "payfast_webhook", reason: "rejected: unrecognizable merchant reference" });
       return NextResponse.json({ error: "unknown order" }, { status: 400 });
     }
 
@@ -63,6 +67,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (error || !data || data.length === 0) {
       console.error(`PayFast ITN processing failed for order ${result.merchantReference}.`);
+      reportOperationalFailure({ area: "payfast_webhook", orderId: result.merchantReference, reason: "process_payfast_itn RPC failed" }, error ?? undefined);
       return NextResponse.json({ error: "processing failed" }, { status: 500 });
     }
 
@@ -74,6 +79,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       outcome === "rejected_wrong_payment_method"
     ) {
       console.error(`PayFast ITN rejected for order ${result.merchantReference}: ${outcome}`);
+      reportOperationalFailure({ area: "payfast_webhook", orderId: result.merchantReference, reason: `rejected: ${outcome}` });
       return NextResponse.json({ error: outcome }, { status: 400 });
     }
 
@@ -93,6 +99,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         await bookDeliveryForOrder(result.merchantReference);
       } catch (err) {
         console.error(`PayFast webhook: bookDeliveryForOrder threw for order ${result.merchantReference}: ${(err as Error).message}`);
+        reportOperationalFailure({ area: "delivery_booking", orderId: result.merchantReference, reason: "bookDeliveryForOrder threw from webhook" }, err);
       }
     }
 
@@ -100,7 +107,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // legitimate, safe-to-acknowledge outcomes; PayFast expects a 200
     // within 10 seconds or it will keep retrying.
     return NextResponse.json({ received: true, outcome });
-  } catch {
+  } catch (err) {
     // Catches, among other things, PayFast not being configured at all
     // (getPayFastCredentials() throws if PAYFAST_MERCHANT_ID/KEY are
     // unset) — this route is PayFast-specific, so it always constructs
@@ -108,6 +115,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // currently selects. Never let an unexpected error surface as an
     // unhandled crash/stack trace; always a clean, generic response.
     console.error("PayFast webhook processing threw an unexpected error.");
+    reportOperationalFailure({ area: "payfast_webhook", reason: "webhook handler threw" }, err);
     return NextResponse.json({ error: "internal error" }, { status: 500 });
   }
 }

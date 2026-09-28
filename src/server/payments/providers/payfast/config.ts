@@ -1,4 +1,5 @@
 import { getServerEnv } from "@/config/env";
+import { assertPayFastEnvironmentSafety } from "./environmentGuard";
 
 export type PayFastHosts = {
   processUrl: string;
@@ -45,6 +46,12 @@ export function getPayFastHosts(): PayFastHosts {
 }
 
 export function getPayFastCredentials(): PayFastCredentials {
+  // Phase 15B, C-6: refuses a preview deployment configured for live
+  // PayFast, and a production deployment left on sandbox — see
+  // environmentGuard.ts's own doc comment for why this lives here
+  // (first-use) rather than at application startup.
+  assertPayFastEnvironmentSafety(isPayFastSandbox());
+
   const env = getServerEnv();
   if (!env.PAYFAST_MERCHANT_ID || !env.PAYFAST_MERCHANT_KEY) {
     throw new Error(

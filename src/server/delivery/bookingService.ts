@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveDeliveryProviders } from "./registry";
 import type { GeoPoint } from "./types";
+import { reportOperationalFailure } from "@/lib/monitoring/reportOperationalFailure";
 
 /**
  * Phase 7A: books a delivery with the provider once payment has
@@ -52,6 +53,7 @@ export async function bookDeliveryForOrder(orderId: string): Promise<void> {
 
   if (!quote) {
     console.error(`bookDeliveryForOrder: order ${orderId} is a delivery order with no attached delivery_quotes row — cannot book.`);
+    reportOperationalFailure({ area: "delivery_booking", orderId, reason: "delivery order with no delivery_quotes row" });
     return;
   }
 
@@ -63,6 +65,7 @@ export async function bookDeliveryForOrder(orderId: string): Promise<void> {
 
   if (reserveError) {
     console.error(`bookDeliveryForOrder: reserve_delivery_order() failed for order ${orderId}: ${reserveError.message}`);
+    reportOperationalFailure({ area: "delivery_booking", orderId, reason: "reserve_delivery_order RPC failed" }, reserveError);
     return;
   }
   if (!deliveryOrderId) {
@@ -89,6 +92,7 @@ export async function bookDeliveryForOrder(orderId: string): Promise<void> {
         providerRow?.slug ?? "none"
       }, is_active: ${providerRow?.is_active ?? "n/a"}).`,
     );
+    reportOperationalFailure({ area: "delivery_booking", orderId, reason: "no active/registered delivery provider for quote" });
     return;
   }
 
@@ -100,6 +104,7 @@ export async function bookDeliveryForOrder(orderId: string): Promise<void> {
   if (!pickupLoc || !dropoffLoc) {
     await admin.rpc("record_delivery_booking", { p_delivery_order_id: deliveryOrderId, p_provider_tracking_ref: null, p_status: "failed" });
     console.error(`bookDeliveryForOrder: could not resolve pickup/dropoff coordinates for order ${orderId}.`);
+    reportOperationalFailure({ area: "delivery_booking", orderId, reason: "could not resolve pickup/dropoff coordinates" });
     return;
   }
 
@@ -127,5 +132,6 @@ export async function bookDeliveryForOrder(orderId: string): Promise<void> {
   } catch (err) {
     await admin.rpc("record_delivery_booking", { p_delivery_order_id: deliveryOrderId, p_provider_tracking_ref: null, p_status: "failed" });
     console.error(`bookDeliveryForOrder: provider.bookDelivery() threw for order ${orderId}: ${(err as Error).message}`);
+    reportOperationalFailure({ area: "delivery_booking", orderId, reason: "provider.bookDelivery threw" }, err);
   }
 }

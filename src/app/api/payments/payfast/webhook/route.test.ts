@@ -22,6 +22,11 @@ vi.mock("@/server/delivery/bookingService", () => ({
   bookDeliveryForOrder: bookDeliveryForOrderMock,
 }));
 
+const reportOperationalFailureMock = vi.fn();
+vi.mock("@/lib/monitoring/reportOperationalFailure", () => ({
+  reportOperationalFailure: reportOperationalFailureMock,
+}));
+
 const { POST } = await import("./route");
 
 function makeRequest(body: string, headers: Record<string, string> = {}) {

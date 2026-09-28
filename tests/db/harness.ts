@@ -23,8 +23,9 @@ const SEED_FILE = path.resolve(here, "../../supabase/seed.sql");
  *
  * This is not a substitute for testing against the real Supabase CLI +
  * Docker stack (no real GoTrue/PostgREST/Storage service here — the
- * storage.objects stub only has the columns our own policies reference,
- * not Storage's full real schema) — see DATABASE.md — but it runs our
+ * storage.objects/storage.buckets stubs only have the columns our own
+ * policies and Phase 15B's bucket-provisioning migration reference, not
+ * Storage's full real schema) — see DATABASE.md — but it runs our
  * actual migration SQL and actual RLS policies against a real Postgres,
  * not a description of them.
  */
@@ -57,6 +58,15 @@ export async function bootDb(): Promise<PGlite> {
     $$;
 
     create schema storage;
+    create table storage.buckets (
+      id text primary key,
+      name text not null,
+      public boolean not null default false,
+      file_size_limit bigint,
+      allowed_mime_types text[],
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
     create table storage.objects (
       id uuid primary key default gen_random_uuid(),
       bucket_id text not null,
@@ -86,6 +96,12 @@ export async function bootDb(): Promise<PGlite> {
 
     grant usage on schema storage to anon, authenticated, service_role;
     grant select, insert, update, delete on storage.objects to anon, authenticated, service_role;
+    -- Bucket config isn't secret and nothing in this app writes to
+    -- storage.buckets from a client role (only migrations do, at apply
+    -- time, outside any client role's RLS context) — matching real
+    -- Supabase, where bucket management goes through the Storage API/
+    -- Studio with a service key, never a plain authenticated session.
+    grant select on storage.buckets to anon, authenticated, service_role;
   `);
 
   return db;

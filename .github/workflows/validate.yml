@@ -1,0 +1,60 @@
+name: Validate
+
+# Phase 15B (C-4): runs the repository's own existing validation commands
+# on every PR and every push to main, so a regression can't reach main
+# unnoticed. No new test framework, no deployment step — just the same
+# `npm test` / `npm run test:db` / `npm run lint` / `npm run typecheck` /
+# `npm run build` a developer already runs locally before this phase.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same PR/branch cancels the still-running check for
+# the previous one — there's no value in finishing a validation run for a
+# commit that's already been superseded.
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    # test:db boots an in-process PGlite (Postgres compiled to WASM) —
+    # no external database service, no Docker/Podman container needed.
+    # build/lint/typecheck need real-shaped (but not real/secret) env
+    # values since Next.js validates env.ts's zod schema at build time;
+    # PAYMENT_PROVIDER/DELIVERY_PROVIDERS stay at their "mock" defaults,
+    # same as a fresh local checkout with no provider configured.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      NEXT_PUBLIC_DEFAULT_CURRENCY: ZAR
+      PAYMENT_PROVIDER: mock
+      DELIVERY_PROVIDERS: mock
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Database/RLS tests
+        run: npm run test:db
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

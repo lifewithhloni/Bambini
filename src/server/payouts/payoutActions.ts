@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/server/auth/requireAdmin";
 import { requireUser } from "@/server/auth/requireUser";
+import { reportOperationalFailure } from "@/lib/monitoring/reportOperationalFailure";
 
 export type PayoutActionState = { error: string } | { success: true } | null;
 
@@ -24,7 +25,7 @@ export async function createPayout(orderIds: string[], _prev: PayoutActionState)
   const supabase = await createClient();
 
   const { error } = await supabase.rpc("create_seller_payout", { p_order_ids: orderIds });
-  if (error) return { error: humanizePayoutError(error.message) };
+  if (error) return { error: humanizePayoutError(error.message, error) };
 
   revalidatePath("/admin/payouts");
   return { success: true };
@@ -37,7 +38,7 @@ export async function markPayoutPaid(payoutId: string, _prev: PayoutActionState,
   const providerReference = String(formData.get("providerReference") ?? "").trim() || null;
 
   const { error } = await supabase.rpc("mark_payout_paid", { p_payout_id: payoutId, p_provider_reference: providerReference });
-  if (error) return { error: humanizePayoutError(error.message) };
+  if (error) return { error: humanizePayoutError(error.message, error, payoutId) };
 
   revalidatePath("/admin/payouts");
   return { success: true };
@@ -50,7 +51,7 @@ export async function markPayoutFailed(payoutId: string, _prev: PayoutActionStat
   const notes = String(formData.get("notes") ?? "").trim() || null;
 
   const { error } = await supabase.rpc("mark_payout_failed", { p_payout_id: payoutId, p_notes: notes });
-  if (error) return { error: humanizePayoutError(error.message) };
+  if (error) return { error: humanizePayoutError(error.message, error, payoutId) };
 
   revalidatePath("/admin/payouts");
   return { success: true };
@@ -73,7 +74,7 @@ export async function recoverPayout(payoutId: string, _prev: PayoutActionState, 
   if (!reason) return { error: "A recovery reason is required." };
 
   const { error } = await supabase.rpc("recover_failed_payout", { p_payout_id: payoutId, p_reason: reason });
-  if (error) return { error: humanizePayoutError(error.message) };
+  if (error) return { error: humanizePayoutError(error.message, error, payoutId) };
 
   revalidatePath("/admin/payouts");
   return { success: true };
@@ -94,7 +95,7 @@ export async function requestPayout(_prev: PayoutActionState): Promise<PayoutAct
   const supabase = await createClient();
 
   const { error } = await supabase.rpc("request_seller_payout");
-  if (error) return { error: humanizePayoutError(error.message) };
+  if (error) return { error: humanizePayoutError(error.message, error) };
 
   revalidatePath("/sell/payouts");
   return { success: true };
@@ -116,14 +117,27 @@ export async function requestBusinessPayout(businessId: string, _prev: PayoutAct
   const supabase = await createClient();
 
   const { error } = await supabase.rpc("request_business_payout", { p_business_id: businessId });
-  if (error) return { error: humanizePayoutError(error.message) };
+  if (error) return { error: humanizePayoutError(error.message, error) };
 
   revalidatePath(`/account/business/${businessId}`);
   return { success: true };
 }
 
-function humanizePayoutError(message?: string): string {
-  if (!message) return "Could not complete this action. Please try again.";
+/**
+ * Every branch below except the last is an expected, named business-rule
+ * rejection (a seller double-claiming an order, a payout already paid,
+ * etc.) — normal traffic, not reported to Sentry. Only the final
+ * fallback — an error message that matches none of them — is genuinely
+ * unexpected (a bug, a DB problem, a new failure mode this list hasn't
+ * caught up with yet), and that's the one case reportOperationalFailure()
+ * is called for, so a real payout problem is observable without Sentry
+ * being spammed by ordinary user-facing rejections.
+ */
+function humanizePayoutError(message: string | undefined, error?: unknown, payoutId?: string): string {
+  if (!message) {
+    reportOperationalFailure({ area: "payout", payoutId, reason: "payout RPC failed with no error message" }, error);
+    return "Could not complete this action. Please try again.";
+  }
   if (/already been paid out/i.test(message)) return "One or more of these orders have already been paid out.";
   if (/must be completed/i.test(message)) return "Every order must be completed before it's eligible for payout.";
   if (/only online orders/i.test(message)) return "Cash orders are not eligible for payout.";
@@ -142,5 +156,7 @@ function humanizePayoutError(message?: string): string {
   if (/only the business owner can request/i.test(message)) return "Only the business owner can request a payout.";
   if (/not authorized to view this business/i.test(message)) return "You don't have access to this business's balance.";
   if (/not found/i.test(message)) return "One or more orders were not found.";
+
+  reportOperationalFailure({ area: "payout", payoutId, reason: `unrecognized payout error: ${message}` }, error);
   return "Could not complete this action. Please try again.";
 }
