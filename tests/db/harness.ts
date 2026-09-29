@@ -33,6 +33,16 @@ export async function bootDb(): Promise<PGlite> {
   const db = new PGlite({ extensions: { postgis, pgcrypto, pg_trgm } });
 
   await db.exec(`
+    -- Hosted Supabase pre-installs pgcrypto into its own "extensions"
+    -- schema, which a migration session's search_path doesn't include —
+    -- so 20260920090000's "create extension if not exists pgcrypto with
+    -- schema public" is a no-op there, and pgcrypto functions only
+    -- resolve schema-qualified (extensions.gen_random_bytes(...)).
+    -- Mirrored here so an unqualified call fails in tests the same way it
+    -- fails in production, instead of silently resolving from public.
+    create schema extensions;
+    create extension pgcrypto with schema extensions;
+
     create schema auth;
     create table auth.users (
       id uuid primary key default gen_random_uuid(),
@@ -87,6 +97,7 @@ export async function bootDb(): Promise<PGlite> {
     create role service_role nologin noinherit bypassrls;
 
     grant usage on schema public to anon, authenticated, service_role;
+    grant usage on schema extensions to anon, authenticated, service_role;
     alter default privileges for role postgres in schema public
       grant select, insert, update, delete on tables to anon, authenticated, service_role;
     alter default privileges for role postgres in schema public

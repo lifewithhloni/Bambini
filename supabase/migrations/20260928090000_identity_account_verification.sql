@@ -49,7 +49,7 @@
 -- (20260920090000_extensions_and_enums.sql).
 alter table public.identity_verifications
   add column id_number text not null check (id_number ~ '^[0-9]{13}$'),
-  add column id_number_hash text generated always as (encode(digest(id_number, 'sha256'), 'hex')) stored;
+  add column id_number_hash text generated always as (encode(extensions.digest(id_number, 'sha256'), 'hex')) stored;
 
 -- Prevents two different profiles from both holding a *verified*
 -- submission for the same ID number — deliberately partial (WHERE
@@ -477,7 +477,7 @@ begin
 
   if p_fulfilment_type = 'collection' then
     loop
-      v_rand_bytes := gen_random_bytes(4);
+      v_rand_bytes := extensions.gen_random_bytes(4);
       v_collection_code := lpad(
         (
           (

@@ -50,7 +50,7 @@
 -- error, never a second successful order for the same listing.
 alter table public.orders
   add column order_reference text not null unique
-  default ('BMB-' || upper(substr(encode(gen_random_bytes(4), 'hex'), 1, 6)));
+  default ('BMB-' || upper(substr(encode(extensions.gen_random_bytes(4), 'hex'), 1, 6)));
 
 create function public.create_order(
   p_product_id uuid,

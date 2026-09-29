@@ -280,7 +280,7 @@ begin
 
   if p_fulfilment_type = 'collection' then
     loop
-      v_rand_bytes := gen_random_bytes(4);
+      v_rand_bytes := extensions.gen_random_bytes(4);
       v_collection_code := lpad(
         (
           (
