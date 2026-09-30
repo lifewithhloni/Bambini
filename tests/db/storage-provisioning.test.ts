@@ -10,6 +10,12 @@ import { asAnon, asUser, bootAndMigrate, makeUser } from "./harness";
  * pre-existing product-images/verification-documents policy behaviour
  * (already covered in depth by listings.test.ts, verification.test.ts,
  * business.test.ts) still holds.
+ *
+ * verification-documents' size limit is re-asserted at its Phase 18
+ * value (2 MiB, lowered from 10 MiB by
+ * 20261015090000_identity_verification_privacy_and_size.sql) — this file
+ * always reflects the bucket's current, full-migration-chain state, not
+ * a snapshot of Phase 15B alone.
  */
 describe("storage bucket provisioning (Phase 15B, C-3)", () => {
   let db: PGlite;
@@ -41,9 +47,9 @@ describe("storage bucket provisioning (Phase 15B, C-3)", () => {
     expect((await bucket("verification-documents")).public).toBe(false);
   });
 
-  it("C. size limits match config.toml (5MiB images, 10MiB documents)", async () => {
+  it("C. size limits: 5MiB images (config.toml), 2MiB documents (Phase 18)", async () => {
     expect(Number((await bucket("product-images")).file_size_limit)).toBe(5 * 1024 * 1024);
-    expect(Number((await bucket("verification-documents")).file_size_limit)).toBe(10 * 1024 * 1024);
+    expect(Number((await bucket("verification-documents")).file_size_limit)).toBe(2097152);
   });
 
   it("D. MIME restrictions match config.toml", async () => {

@@ -142,6 +142,30 @@ export type Database = {
       // the review_identity_verification() RPC, never a raw client
       // UPDATE (the RLS policy that used to allow one was dropped by
       // this same migration).
+      // Phase 18: one row per profile, written exactly once — on first
+      // submission — by allocate_verification_folder_slug(); reused on
+      // every resubmission. This is now part of the actual authorization
+      // boundary for the verification-documents bucket (see
+      // 20261015090000_identity_verification_privacy_and_size.sql), not
+      // just a display label. No client write path exists at all.
+      verification_folder_slugs: {
+        Row: {
+          profile_id: string;
+          folder_name: string;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "verification_folder_slugs_profile_id_fkey";
+            columns: ["profile_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
       identity_verifications: {
         Row: {
           id: string;
@@ -1235,6 +1259,17 @@ export type Database = {
       };
     };
     Functions: {
+      // Phase 18 — allocates (or returns the caller's existing) human-
+      // readable verification-documents folder name. Always answers for
+      // auth.uid() only; p_base_name is a sanitized display label, never
+      // itself trusted as an identity or path segment on its own — see
+      // 20261015090000_identity_verification_privacy_and_size.sql.
+      allocate_verification_folder_slug: {
+        Args: {
+          p_base_name: string;
+        };
+        Returns: string;
+      };
       search_products: {
         Args: {
           search_term?: string | null;

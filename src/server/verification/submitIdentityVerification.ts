@@ -1,11 +1,10 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/server/auth/requireUser";
 import { validateSaIdNumber } from "./idNumberValidation";
-import { buildVerificationDocumentPath, validateDocumentFile } from "./documentValidation";
+import { buildVerificationDocumentPath, sanitizeFullNameForStoragePath, validateDocumentFile } from "./documentValidation";
 
 export type SubmitVerificationState = { error: string } | null;
 
@@ -56,7 +55,21 @@ export async function submitIdentityVerification(_prev: SubmitVerificationState,
     return { error: "Your submission is already under review." };
   }
 
-  const path = buildVerificationDocumentPath(user.id, file.type, randomUUID());
+  // The folder itself — human-readable, e.g. "Lehlohonolo_Maishoane_01" —
+  // is allocated once per profile by allocate_verification_folder_slug()
+  // (20261015090000_identity_verification_privacy_and_size.sql), which
+  // is also the real authorization boundary for it; this action only
+  // ever supplies a sanitized base name, never the final folder, and
+  // never a client-influenced value. A resubmission reuses the same
+  // folder the function already allocated on first submission.
+  const { data: profile } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
+  const baseName = sanitizeFullNameForStoragePath(profile?.full_name ?? "");
+  const { data: folderName, error: allocateError } = await supabase.rpc("allocate_verification_folder_slug", { p_base_name: baseName });
+  if (allocateError || !folderName) {
+    return { error: "Could not submit your verification. Please try again." };
+  }
+
+  const path = buildVerificationDocumentPath(folderName, file.type);
   const { error: uploadError } = await supabase.storage.from("verification-documents").upload(path, file, { contentType: file.type });
   if (uploadError) {
     return { error: "Could not upload your document. Please try again." };
