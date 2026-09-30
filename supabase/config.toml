@@ -21,6 +21,17 @@ site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = ["http://127.0.0.1:3000"]
 jwt_expiry = 3600
 enable_signup = true
+# Mirrors src/server/auth/validation.ts's checkPasswordStrength() as a
+# second, independent backstop enforced by Supabase Auth itself — the
+# app's own check remains authoritative and runs first, this is
+# defense in depth. Verified against the installed Supabase CLI
+# (2.118.0)'s own generated config template: both keys and this exact
+# value for password_requirements are real, supported options, not
+# invented. Does NOT reach the already-deployed production project —
+# see ENVIRONMENT.md's Production Supabase Auth configuration checklist
+# for the equivalent Dashboard setting that must be made manually there.
+minimum_password_length = 12
+password_requirements = "lower_upper_letters_digits_symbols"
 
 [auth.email]
 enable_signup = true

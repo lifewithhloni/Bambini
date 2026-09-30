@@ -1,13 +1,36 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useActionState } from "react";
+import { Suspense, useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { signUp } from "@/server/auth/actions";
+import { PASSWORD_MIN_LENGTH, checkPasswordStrength } from "@/server/auth/validation";
 
 const inputClass =
   "w-full rounded-lg border border-brand-border bg-white px-3 py-2 text-brand-ink placeholder:text-brand-muted focus:border-brand-sage-dark focus:outline-none focus:ring-1 focus:ring-brand-sage-dark";
+
+/**
+ * Renders straight from checkPasswordStrength() — the same function
+ * passwordSchema (src/server/auth/validation.ts) uses server-side — so
+ * the rules shown here can never drift from what's actually enforced.
+ * Only appears once the user has started typing a password; empty-field
+ * noise before that isn't useful feedback.
+ */
+function PasswordChecklist({ password }: { password: string }) {
+  if (password.length === 0) return null;
+  const { requirements } = checkPasswordStrength(password);
+
+  return (
+    <ul className="flex flex-col gap-0.5 text-xs">
+      {requirements.map((r) => (
+        <li key={r.id} className={r.met ? "text-green-700" : "text-brand-muted"}>
+          {r.met ? "✓" : "○"} {r.label.charAt(0).toUpperCase() + r.label.slice(1)}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -26,6 +49,7 @@ function SignUpForm() {
   const [state, formAction] = useActionState(signUp, null);
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "";
+  const [password, setPassword] = useState("");
 
   if (state && "confirmationSent" in state) {
     return (
@@ -64,10 +88,13 @@ function SignUpForm() {
             name="password"
             type="password"
             autoComplete="new-password"
-            minLength={8}
+            minLength={PASSWORD_MIN_LENGTH}
             required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
             className={inputClass}
           />
+          <PasswordChecklist password={password} />
         </div>
 
         <div className="flex flex-col gap-1">
@@ -79,7 +106,7 @@ function SignUpForm() {
             name="confirmPassword"
             type="password"
             autoComplete="new-password"
-            minLength={8}
+            minLength={PASSWORD_MIN_LENGTH}
             required
             className={inputClass}
           />

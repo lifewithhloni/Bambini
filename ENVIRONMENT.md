@@ -200,10 +200,28 @@ deployment environment (e.g. a new preview domain pattern) is added:
       enabled in Production the same way `config.toml` enables it
       locally; this is a per-project dashboard toggle, not something
       migrations control.
-- [ ] **Password/auth configuration** — minimum password length/
-      strength policy and any additional MFA settings the team wants,
-      reviewed against Supabase's current defaults (defaults can change
-      between Supabase platform versions; this repo doesn't pin them).
+- [ ] **Password policy** — set the production project to match the
+      app's own policy exactly: Dashboard → Authentication → Policies →
+      Password Requirements — **Minimum password length: 12**,
+      **Required characters: Lowercase, uppercase, digits, and symbols**
+      (same as `supabase/config.toml`'s `minimum_password_length`/
+      `password_requirements`, which only take effect locally/on a
+      freshly-bootstrapped project — the live production project needs
+      this set by hand). The application's own check
+      (`checkPasswordStrength()`, `src/server/auth/validation.ts`) is
+      authoritative and already enforces this; this Dashboard setting is
+      the independent backstop so a direct API request can't bypass it.
+      Also consider enabling **Leaked Password Protection** (Dashboard →
+      Authentication → Policies) — it checks new passwords against
+      HaveIBeenPwned's breach database. It's a Dashboard-only feature
+      with no equivalent key in `supabase/config.toml` for this CLI
+      version; this repo doesn't enable it and makes no judgement call
+      on it for you — see DECISIONS.md for how to record the call if you
+      make one.
+- [ ] **MFA and any other auth configuration** — any additional
+      multi-factor settings the team wants, reviewed against Supabase's
+      current defaults (defaults can change between Supabase platform
+      versions; this repo doesn't pin them).
 - [ ] **Auth rate-limit settings** — review Supabase's built-in
       rate-limit configuration for the production project (signup,
       sign-in, OTP/email-send limits) rather than assuming the

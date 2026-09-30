@@ -43,8 +43,8 @@ describe("signUp action", () => {
   const validFields = {
     fullName: "Alice Buyer",
     email: "Alice@Example.com",
-    password: "correcthorse",
-    confirmPassword: "correcthorse",
+    password: "Correct-Horse9",
+    confirmPassword: "Correct-Horse9",
   };
 
   it("rejects invalid input before ever calling Supabase", async () => {
@@ -60,7 +60,7 @@ describe("signUp action", () => {
 
     expect(signUpMock).toHaveBeenCalledWith({
       email: "alice@example.com",
-      password: "correcthorse",
+      password: "Correct-Horse9",
       options: { data: { full_name: "Alice Buyer" } },
     });
     const call = signUpMock.mock.calls[0][0];
