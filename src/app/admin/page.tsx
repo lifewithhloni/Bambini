@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { requireAdmin } from "@/server/auth/requireAdmin";
 import { getAdminOverview } from "@/server/admin/getAdminOverview";
+import { getMarketplaceOverview } from "@/server/admin/getMarketplaceOverview";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Check, PackageCheck, AlertTriangle, Banknote, Truck, SlidersHorizontal, CreditCard, ChevronRight } from "@/components/ui/icons";
+import { Check, PackageCheck, AlertTriangle, Banknote, Truck, SlidersHorizontal, CreditCard, ChevronRight, User, ShoppingBag } from "@/components/ui/icons";
 import type { BadgeTone } from "@/lib/ui/variants";
 import type { ComponentType } from "react";
 
@@ -29,6 +30,20 @@ function AttentionCard({ label, count, href, icon: Icon }: { label: string; coun
         {needsAttention && <Badge tone={tone}>Needs review</Badge>}
       </Card>
     </Link>
+  );
+}
+
+function StatCard({ label, count, icon: Icon }: { label: string; count: number; icon: IconType }) {
+  return (
+    <Card className="flex items-center gap-3">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-light-sage">
+        <Icon className="h-4 w-4 text-bambini-forest" aria-hidden={true} />
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="text-heading-card text-brand-ink">{count.toLocaleString()}</span>
+        <span className="truncate text-caption text-brand-muted">{label}</span>
+      </div>
+    </Card>
   );
 }
 
@@ -61,7 +76,15 @@ function NavCard({ label, description, href, icon: Icon }: { label: string; desc
  */
 export default async function AdminDashboardPage() {
   await requireAdmin("/admin");
-  const counts = await getAdminOverview();
+  const [counts, marketplace] = await Promise.all([getAdminOverview(), getMarketplaceOverview()]);
+
+  const overview: { label: string; count: number; icon: IconType }[] = [
+    { label: "Total accounts", count: marketplace.totalAccounts, icon: User },
+    { label: "Verified accounts", count: marketplace.verifiedAccounts, icon: Check },
+    { label: "Business accounts", count: marketplace.businessAccounts, icon: PackageCheck },
+    { label: "Active listings", count: marketplace.activeListings, icon: ShoppingBag },
+    { label: "Completed orders", count: marketplace.completedOrders, icon: CreditCard },
+  ];
 
   const attention: { label: string; count: number; href: string; icon: IconType }[] = [
     { label: "Pending identity verifications", count: counts.pendingIdentityVerifications, href: "/admin/verifications", icon: Check },
@@ -87,6 +110,15 @@ export default async function AdminDashboardPage() {
         <h1 className="text-heading-page text-brand-ink">Bambini Admin</h1>
         <p className="mt-1 text-body-small text-brand-muted">Manage verification, disputes, payouts and delivery.</p>
       </div>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-heading-card text-brand-ink">Marketplace overview</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {overview.map((o) => (
+            <StatCard key={o.label} {...o} />
+          ))}
+        </div>
+      </section>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-heading-card text-brand-ink">Needs attention</h2>

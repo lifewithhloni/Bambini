@@ -10,6 +10,7 @@ const stripped = (...parts: string[]) =>
 
 const page = stripped("src", "app", "admin", "page.tsx");
 const overview = stripped("src", "server", "admin", "getAdminOverview.ts");
+const marketplace = stripped("src", "server", "admin", "getMarketplaceOverview.ts");
 
 // The existing admin section pages/routes this dashboard must link to
 // without changing — asserting they still exist is the guard against
@@ -34,9 +35,13 @@ describe("/admin dashboard — authorization (non-admin gets the same 404 as eve
   });
 
   it("never imports the admin/service-role client — RLS plus requireAdmin() stays the only boundary", () => {
-    for (const src of [page, overview]) {
+    for (const src of [page, overview, marketplace]) {
       expect(src).not.toMatch(/createAdminClient|service_role/);
     }
+  });
+
+  it("the marketplace overview function also independently calls requireAdmin()", () => {
+    expect(marketplace).toMatch(/await requireAdmin\(["']\/admin["']\)/);
   });
 });
 
@@ -57,6 +62,40 @@ describe("/admin dashboard — reuses existing admin functions, invents nothing"
 
   it("no count is a hardcoded or random number — every field in the returned object traces back to a real array's .length or .filter().length", () => {
     expect(overview).not.toMatch(/count:\s*\d+|Math\.random/);
+  });
+
+  it("the existing 'needs attention' data path (getAdminOverview.ts) was not modified by the marketplace overview feature — it still only reuses the same five pre-existing list functions, no new import", () => {
+    expect(overview).not.toMatch(/getMarketplaceOverview|marketplace/i);
+  });
+});
+
+describe("Marketplace overview — five real counts, no invented statistics", () => {
+  it("getMarketplaceOverview() only issues head-only count queries against profiles/businesses/products/orders, never a hardcoded number", () => {
+    expect(marketplace).not.toMatch(/count:\s*\d+|Math\.random/);
+    expect(marketplace).toMatch(/\.from\("profiles"\)/);
+    expect(marketplace).toMatch(/\.from\("businesses"\)/);
+    expect(marketplace).toMatch(/\.from\("products"\)/);
+    expect(marketplace).toMatch(/\.from\("orders"\)/);
+    expect(marketplace).toMatch(/count:\s*"exact",\s*head:\s*true/);
+  });
+
+  it("business accounts counts businesses, never business_members — staff can never inflate this number", () => {
+    expect(marketplace).not.toMatch(/\.from\("business_members"\)/);
+  });
+
+  it("active listings filters on the current 'published' status label, never the retired 'active' literal", () => {
+    expect(marketplace).toMatch(/\.eq\("status",\s*"published"\)/);
+    expect(marketplace).not.toMatch(/\.eq\("status",\s*"active"\)/);
+  });
+
+  it("the page renders the new section using getMarketplaceOverview(), not a direct query", () => {
+    expect(page).toMatch(/getMarketplaceOverview\(\)/);
+    expect(page).toMatch(/Marketplace overview/);
+  });
+
+  it("marketplace overview stat cards are never links — no route was invented for a metric with no existing admin destination", () => {
+    const statCardBody = page.slice(page.indexOf("function StatCard"), page.indexOf("function NavCard"));
+    expect(statCardBody).not.toMatch(/<Link/);
   });
 });
 
