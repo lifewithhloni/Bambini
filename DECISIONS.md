@@ -658,8 +658,13 @@ the only sanctioned read path is now `get_my_collection_code()`.
    `phone_confirmed_at`), via its native `updateUser({ phone })` /
    `verifyOtp({ type: 'phone_change' })` flow — no custom OTP store.
    `profiles.phone` is retained but non-authoritative and no longer read
-   or written by the app. `can_transact()` is unchanged. Still open: which
-   SMS provider (see DEPLOYMENT.md "Connecting an SMS provider").
+   or written by the app. `can_transact()` is unchanged. **Phase 15A.2/15A.3:**
+   provider = SMSMessenger behind a Supabase Send SMS hook (Supabase still
+   owns the OTP; Bambini's endpoint only transports it and re-enforces
+   the kill switch, SA-only destinations and its own throttles, because
+   direct Auth API calls bypass server actions). Delivery-report webhooks
+   are intentionally deferred. Production activation is a manual step —
+   see DEPLOYMENT.md "Connecting SMS".
 4. **Cash eligibility default thresholds** — the seed values (3 completed
    transactions, 4.0 minimum rating, account + identity verification
    required, 0 unresolved disputes) are reasonable defaults, not a

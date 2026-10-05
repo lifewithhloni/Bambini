@@ -18,6 +18,10 @@ export function mapPhoneAuthError(error: AuthErrorLike): PhoneAuthErrorKind {
   const code = error?.code;
   if (code === "over_sms_send_rate_limit" || code === "over_request_rate_limit" || error?.status === 429) return "rate_limited";
   if (code === "otp_expired") return "invalid_code";
+  // A failure inside the Send SMS Hook (refused send, provider outage, throttle,
+  // kill switch) reaches the client as a server error from Auth, not as a
+  // "phone" error — treat any 5xx as the service being unavailable.
+  if (typeof error?.status === "number" && error.status >= 500) return "provider_unavailable";
   if (code === "phone_provider_disabled" || code === "sms_send_failed" || code === "otp_disabled" || code === "hook_timeout" || code === "hook_timeout_after_retry") {
     return "provider_unavailable";
   }

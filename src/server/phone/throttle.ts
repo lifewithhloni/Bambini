@@ -95,6 +95,15 @@ export async function peekSendCooldownSeconds(userId: string): Promise<number> {
   return d.allowed ? 0 : d.retryAfterSeconds;
 }
 
+/**
+ * Generic single-bucket check (records the attempt when allowed) for
+ * callers that manage their own subject namespace — used by the Send SMS
+ * Hook (hook/hookThrottle.ts). Same store, same fail-closed behaviour.
+ */
+export async function throttleSubject(subject: string, max: number, windowSeconds: number): Promise<ThrottleDecision> {
+  return hit(subject, "send", max, windowSeconds, 0, true);
+}
+
 /** After a SUCCESSFUL verification: forget the user's failed attempts. Best-effort. */
 export async function resetVerifyThrottle(userId: string): Promise<void> {
   try {

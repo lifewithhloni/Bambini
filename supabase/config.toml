@@ -76,6 +76,27 @@ max_frequency = "60s"
 # backdoor there. See ENVIRONMENT.md.
 27820000001 = "123456"
 
+[auth.hook.send_sms]
+# Phase 15A.3 — LOCAL DEV ONLY, OFF by default. Routes Auth's OTP SMS to
+# Bambini's own hook endpoint (src/app/api/hooks/send-sms/route.ts), which
+# forwards to SMSMessenger. Verified against Supabase CLI 2.118.0: these
+# three keys parse, and with enabled = false no secret is needed.
+#
+# To try it locally: export SEND_SMS_HOOK_SECRET ("v1,whsec_<base64>", at
+# least 32 chars; the CLI refuses to start if it is missing or malformed
+# while enabled = true), set the SMSMESSENGER_* / PHONE_* variables for the
+# Next dev server, and flip enabled to true IN YOUR LOCAL COPY ONLY.
+# The secret is always an env() reference — never a literal here. The uri
+# is a local Docker-host address and means nothing on a hosted project.
+# Unverified: whether an enabled send_sms hook stops the CLI's "no SMS
+# provider is enabled, disabling phone login" behaviour (it could not be
+# tested without Docker) — check this the first time the hook is run locally.
+# NEVER apply this file to a hosted project (supabase config push): the
+# hosted hook is configured in the Dashboard (see DEPLOYMENT.md).
+enabled = false
+uri = "http://host.docker.internal:3000/api/hooks/send-sms"
+secrets = "env(SEND_SMS_HOOK_SECRET)"
+
 [storage]
 enabled = true
 file_size_limit = "10MiB"

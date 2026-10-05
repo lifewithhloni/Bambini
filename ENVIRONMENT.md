@@ -129,7 +129,17 @@ effect until the matching adapter is written and registered.
 
 | Variable | Visibility | Secret? | Local | Preview | Production |
 | --- | --- | --- | --- | --- | --- |
-| `PHONE_VERIFICATION_ENABLED` | server-only | No | unset/`false` | unset/`false` | `true` **only after** an SMS provider is connected and tested |
+| `PHONE_VERIFICATION_ENABLED` | server-only | No | unset/`false` | unset/`false` | `true` **only after** the SMS hook is connected and tested |
+| `SEND_SMS_HOOK_SECRET` | server-only | **Yes** | only for local hook testing | unset until tested | the `v1,whsec_…` secret Supabase generates for the hook |
+| `SMSMESSENGER_EMAIL` | server-only | **Yes** | unset | unset until tested | SMSMessenger account email |
+| `SMSMESSENGER_API_TOKEN` | server-only | **Yes** | unset | unset until tested | SMSMessenger API token |
+| `PHONE_THROTTLE_HASH_SECRET` | server-only | **Yes** | any 16+ char value for testing | set | random 16+ chars; keys the destination-number HMAC |
+| `PHONE_GLOBAL_SMS_HOURLY_LIMIT` | server-only | No | optional | optional | emergency spend ceiling, default 200/hour |
+
+None of these may ever be a `NEXT_PUBLIC_` variable, committed, stored in
+a database row, or logged. The same Vercel variable names are used for
+Production and (separately valued) Preview. `SUPABASE_SERVICE_ROLE_KEY`
+(already server-only) is what the hook's throttle uses.
 
 A UI/action availability gate **only**. With it unset or anything other
 than `true`, the verification page says phone verification is
@@ -158,6 +168,23 @@ checked in the repository:
   the build if the block ever lists anything but the single fixture number,
   or if any script/workflow starts running `supabase config push`.
 
+### Send SMS hook (Phase 15A.3)
+
+Supabase Auth keeps generating, storing and checking the code and setting
+`phone_confirmed_at`; the hook (`/api/hooks/send-sms`) only turns the code
+Auth generated into an SMS via SMSMessenger. It is excluded from
+`src/proxy.ts` (no session refresh inside its 5 s budget). It re-enforces,
+because direct calls to Supabase Auth bypass Bambini's server actions:
+the `PHONE_VERIFICATION_ENABLED` kill switch, South-African-mobile-only
+destinations, email-accounts-only (no phone-only signups), its own
+throttles — `huser:<id>` 5/hour, `dest:<HMAC of number>` 3/hour,
+`global:sms` (default 200/hour) — and a 3-second provider timeout. The
+Standard Webhooks signature (5-minute replay window) authenticates
+Supabase's calls. **SMSMessenger delivery-report webhooks are intentionally
+not implemented**: they aren't needed for verification, and would add a
+public endpoint plus a nonce store. Use SMSMessenger's own dashboard for
+delivery reports and credit balance.
+
 ### Phone verification throttling (what protects SMS spend and code guessing)
 
 - **The per-user throttle is authoritative.** It is keyed on the signed-in
@@ -176,6 +203,8 @@ checked in the repository:
   refused with a "try again later" message and a monitoring event is
   reported. Apply migrations `20261016090000` and `20261016090100` before
   enabling `PHONE_VERIFICATION_ENABLED`.
+- **Hook-level throttling (15A.3)** repeats these protections for every OTP
+  send, including direct Auth API calls — see "Send SMS hook" above.
 - Supabase Auth's own limits (`[auth.sms] max_frequency`,
   `[auth.rate_limit]`/Dashboard equivalents) sit underneath all of this.
 

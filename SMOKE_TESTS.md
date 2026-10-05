@@ -81,11 +81,12 @@ Steps: 1) Open `/account/verification`. 2) Try to publish a listing or buy.
 Expected result: the Phone row reads "Currently unavailable" (never "Verified") with no number/code form; publishing and buying are refused with the account-verification error.
 Pass: no verified claim and no way past the gate. Fail: "Verified" shown, a code form appears, or a transaction goes through.
 
-**A8. Phone verification end to end** `[SANDBOX TEST]` — **only after an SMS provider is connected and `PHONE_VERIFICATION_ENABLED=true` on the Preview** (not possible before then)
+**A8. Phone verification end to end** `[SANDBOX TEST]` — **only after the Send SMS hook is connected to SMSMessenger and `PHONE_VERIFICATION_ENABLED=true` on the Preview/staging deployment** (not possible before then)
 Purpose: confirm the real Supabase phone OTP flow, throttling and the gate.
-Prerequisites: provider connected (see DEPLOYMENT.md "Connecting an SMS provider"), migration `20261016090000` applied, a signed-in user with a real South African mobile.
+Prerequisites: the Send SMS hook connected to SMSMessenger (see DEPLOYMENT.md "Connecting SMS"), migrations `20261016090000` and `20261016090100` applied, a signed-in user with a real South African mobile.
 Steps: 1) Enter `082 123 4567`-style number, send code. 2) Confirm the SMS arrives and the page shows "Awaiting code". 3) Try Resend immediately (should be disabled for the cooldown), then after it. 4) Enter a wrong code 5 times. 5) Request a fresh code and enter it correctly. 6) Enter a number already used by another account.
 Expected result: step 4 locks the form with a "too many attempts" message; step 5 (after the lockout window) shows Verified and `can_transact()` reflects it; step 6 shows the generic "couldn't send a code" message, identical to any other send failure.
+Also: 7) With the flag OFF, call `supabase.auth.updateUser({ phone })` directly from a signed-in browser console — it must fail and no SMS must arrive (kill switch). 8) With the flag ON, call it directly with a non-South-African number — it must fail and no SMS must arrive.
 Pass: every step behaves as described and no code or number appears in any log. Fail: a code is logged/returned, the lockout doesn't engage, or step 6 reveals the number is registered.
 
 ## Identity

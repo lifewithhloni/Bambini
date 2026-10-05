@@ -39,13 +39,17 @@ Phase 15C's own brief asked for.
 | `PAYFAST_PASSPHRASE` | unset | sandbox value | **live** value | **Secret** | Required once `PAYMENT_PROVIDER=payfast` |
 | `PAYFAST_SANDBOX` | unset/`true` | **must be `true` or unset** | **must be `false`** | Server-only | See the guard below |
 | `VERCEL_ENV` | not present | set automatically by Vercel | set automatically by Vercel | Server-only | Nothing to configure — Vercel provides it |
-| `PHONE_VERIFICATION_ENABLED` | unset | unset | `true` only after an SMS provider is connected | Server-only | Optional — leave off until SMS works |
+| `PHONE_VERIFICATION_ENABLED` | unset | unset | `true` only after the SMS hook is connected and tested | Server-only | Optional — leave off until SMS works |
+| `SEND_SMS_HOOK_SECRET` | unset | unset until tested | Supabase-generated `v1,whsec_…` | Server-only, **Secret** | Required for the SMS hook |
+| `SMSMESSENGER_EMAIL` / `SMSMESSENGER_API_TOKEN` | unset | unset until tested | SMSMessenger credentials | Server-only, **Secret** | Required for the SMS hook |
+| `PHONE_THROTTLE_HASH_SECRET` | unset | any 16+ chars | random 16+ chars | Server-only, **Secret** | Required for the SMS hook |
+| `PHONE_GLOBAL_SMS_HOURLY_LIMIT` | unset (default 200) | optional | optional | Server-only | Optional emergency spend ceiling |
 | `SENTRY_DSN` | unset (fully supported) | recommended | recommended | Server-only (not secret, but never public) | Optional |
 | `DELIVERY_PROVIDERS` | `mock` (default) | `mock` | `mock` until a real adapter exists | Server-only | Optional |
 | `DELIVERY_TRACKING_POLL_COOLDOWN_SECONDS` | `60` (default) | `60` | tune per real provider once selected | Server-only | Optional |
 | `UBER_DIRECT_*` / `COURIER_GUY_API_KEY` / `BOB_GO_API_KEY` | unset | unset | unset | **Secret** | **Future** — no adapter exists in the codebase yet; setting these has no effect |
 | `YOCO_SECRET_KEY` / `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | unset | unset | unset | **Secret** | **Future** — no adapter exists in the codebase yet |
-| Resend / email-provider variables | — | — | — | — | **Absent.** No email/SMS provider is integrated anywhere in this codebase (confirmed by the Phase 15A audit and re-confirmed for this phase — no `resend`/`nodemailer`/`sendgrid`/`twilio` reference exists in `src/` or `package.json`). Production confirmation/reset emails rely entirely on Supabase Auth's own email sending — see step 5 below. |
+| Resend / email-provider variables | — | — | — | — | **Absent for email.** No email provider is integrated anywhere in this codebase (confirmed by the Phase 15A audit — no `resend`/`nodemailer`/`sendgrid`/`twilio` reference exists in `src/` or `package.json`). SMS is separate: the SMSMessenger hook adapter exists but is inactive until the steps in "Connecting SMS" are done. Production confirmation/reset emails rely entirely on Supabase Auth's own email sending — see step 5 below. |
 
 No value above was invented; every "required/optional" judgment is
 derived from `src/config/env.ts`'s zod schema and how each variable is
@@ -200,36 +204,57 @@ This is the only way to confirm the DSN, project, and network path are
 all actually correct — nothing in the repository can prove this on its
 own.
 
-## Connecting an SMS provider (future step — NOT done in Phase 15A.1)
+## Connecting SMS: Supabase Send SMS hook → SMSMessenger (Phases 15A.1–15A.3 — NOT yet done in production)
 
-Phase 15A.1 built everything around Supabase's native phone identity so
-connecting a provider is configuration, not code. No provider has been
-chosen and no credentials exist in the repository. When one is chosen:
+The code is in the repository; **production SMS is OFF** and nothing below
+has been performed. Supabase Auth keeps generating/verifying the OTP and
+setting `phone_confirmed_at`; Bambini's hook endpoint
+(`/api/hooks/send-sms`) only transports the code via SMSMessenger. No
+provider credentials exist in the repository. Do these **in order**:
 
-1. **Apply migrations `20261016090000_phone_verification_throttle.sql`** (adds the
-   service-role-only abuse-counter table; it holds no phone numbers or codes)
-   **and `20261016090100_revoke_client_write_profiles_phone.sql`** (removes client
-   INSERT/UPDATE on the legacy `profiles.phone`; stored values are untouched) to
-   production. Do this **before** enabling the flag — with the
-   flag on and the table missing, every send fails closed.
-2. In the Supabase Dashboard → Authentication → Providers → **Phone**: enable
-   it, choose the provider (Twilio / Twilio Verify / MessageBird / Vonage /
-   TextLocal are the native options), enter its credentials **in the
-   Dashboard only**, and set the SMS template. Keep the OTP length at 6
-   (`PHONE_LIMITS.otpLength`) or change both together.
-3. Set `[auth.rate_limit]` equivalents in the Dashboard (SMS sent per hour,
-   token verifications) — these sit under the app-level limits.
-4. Consider enabling CAPTCHA protection in the Dashboard.
-5. Understand the side effect: enabling the Phone provider also makes
-   phone-based sign-in/sign-up reachable at the Auth API (Bambini's UI
-   never offers it). A phone-only account still cannot transact without a
-   confirmed email and verified identity; decide whether that surface is
-   acceptable or must be restricted at the provider.
-6. Verify end to end on a **Preview** deployment with a real number, then set
-   `PHONE_VERIFICATION_ENABLED=true` in Production.
+1. **Pilot gate (recommended before production).** Against a staging
+   Supabase project: send real OTPs to Vodacom, MTN, Cell C and Telkom SIMs and
+   record latency/success; confirm sender ID/branding and any required
+   wording; confirm SMSMessenger's real HTTP/error behaviour, what happens
+   when credit runs out, and low-balance alerting; and **confirm the hook
+   payload carries `sms.phone` (the new number) on a `phone_change`** — the
+   hook refuses to send without it and never falls back to `user.phone`.
+2. **Apply migrations** `20261016090000_phone_verification_throttle.sql` (the
+   service-role-only abuse-counter table; no numbers or codes) **and**
+   `20261016090100_revoke_client_write_profiles_phone.sql` (removes client
+   INSERT/UPDATE on legacy `profiles.phone`). The hook has no migration of its
+   own: it reuses the same throttle store. Without the table, every send fails closed.
+3. **Vercel (Production; separate values for Preview/staging):** set
+   `SMSMESSENGER_EMAIL`, `SMSMESSENGER_API_TOKEN`, `PHONE_THROTTLE_HASH_SECRET`
+   (random, 16+ chars), optionally `PHONE_GLOBAL_SMS_HOURLY_LIMIT`. Leave
+   `PHONE_VERIFICATION_ENABLED` **unset**. Deploy.
+4. **Supabase Dashboard → Authentication → Hooks → Send SMS:** enable it with
+   URL `https://<production domain>/api/hooks/send-sms`; Supabase generates the
+   `v1,whsec_…` secret — copy it to Vercel as `SEND_SMS_HOOK_SECRET` and
+   redeploy. Enable the **Phone** provider (the hook replaces Supabase's own SMS
+   sending; no provider credentials go in Supabase). Keep OTP length 6.
+5. **Supabase Dashboard rate limits / expiry:** set SMS-per-hour and token
+   verification limits appropriately and **shorten the SMS OTP expiry**
+   (≈5–10 minutes) to make code guessing unattractive; consider CAPTCHA.
+6. **SMSMessenger dashboard:** fund the account, set a low-balance alert,
+   restrict who can view message logs (they contain the codes), and **do not
+   configure delivery-report callbacks** (deliberately not implemented).
+7. **Dry run with the flag OFF:** trigger a send from a test account; the hook
+   must refuse (403) and no SMS must be sent — this proves the kill switch.
+8. **Enable:** set `PHONE_VERIFICATION_ENABLED=true`, test with your own
+   numbers, watch Sentry (area `phone_verification`) and the SMSMessenger balance.
 
-**MANUAL PRODUCTION CONFIGURATION** — all of the above happens outside this
-repository.
+Side effects to accept knowingly: enabling the Phone provider makes
+phone-based sign-in reachable at the Auth API (the hook refuses to text
+accounts with no email, but Auth may still create an unusable phone-only
+user row — unverified, see SMOKE_TESTS A8); and delivery reporting is
+intentionally deferred (SMSMessenger's HMAC-SHA1 callbacks would need a
+public endpoint and nonce store, and verification doesn't depend on them).
+
+**MANUAL PRODUCTION CONFIGURATION** — everything above happens outside this
+repository. Local hook testing: see the commented-out
+`[auth.hook.send_sms]` block in `supabase/config.toml` (supported by CLI
+2.118.0; disabled by default).
 
 ## Known, deliberately out-of-scope gaps
 
