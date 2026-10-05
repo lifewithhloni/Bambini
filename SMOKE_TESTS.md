@@ -449,3 +449,122 @@ Steps: 1) Send one request to the production webhook URL with a deliberately inv
 Expected result: request is rejected (400, no database write — confirmed safe by `route.ts`'s own logic and its test suite); a corresponding event appears in Sentry shortly after.
 Pass/Fail: event appears in Sentry / nothing appears (indicates a DSN/project/network misconfiguration).
 This creates no order, payment, or user-visible state — safe to run directly against production.
+
+## Phone verification pilot (Phase 15A.4)
+
+**Pilot status: NOT RUN** — no separate staging Supabase/Vercel environment exists yet, so
+no real SMS has been sent and nothing below has a result. Every row of the results table is
+`UNVERIFIED` until a human with the accounts and SIMs runs it. Setup:
+[DEPLOYMENT.md, "Staging environment for the SMS pilot"](DEPLOYMENT.md#staging-environment-for-the-sms-pilot-phase-15a4--required-before-any-real-sms).
+
+**Rules:** staging only — never production. Internal test SIMs only, one per network
+(Vodacom, MTN, Cell C, Telkom). Record numbers **masked** (e.g. `…4567`) or by a label like
+`VOD-1`; never write a full number, an OTP, an email address, a token or a secret into this
+file, git, a ticket, or a screenshot you keep. Do not deliberately exhaust SMSMessenger
+credit. Complete the pre-flight checklist in DEPLOYMENT.md first.
+
+**P1. Basic send** `[PILOT]` — with `PHONE_VERIFICATION_ENABLED=true` on staging, a signed-in test
+user enters a valid SA mobile on `/account/verification` and requests a code.
+Expected: Auth invokes the hook, SMSMessenger receives one request, one SMS arrives.
+Record: network, masked id, time sent, time received, latency, sender ID shown on the handset.
+
+**P2. Verify** — enter the received code. Expected: `verifyOtp` succeeds, the page shows
+Verified, and in the Supabase dashboard (Auth → Users) the user's phone shows confirmed
+(`phone_confirmed_at` set). Re-check that `can_transact()` only turns true if email + identity
+are also verified.
+
+**P3. Wrong code** — enter a wrong 6-digit code. Expected: "incorrect or expired" message,
+`phone_confirmed_at` unchanged.
+
+**P4. Expired code** — request a code, wait past the configured OTP expiry (shortest practical),
+then enter it. Expected: cannot verify. Record the expiry actually configured.
+
+**P5. Resend** — request a resend immediately, then after the cooldown. Expected: the button is
+disabled for the cooldown; the earlier code stops working or a new code works (**record which** —
+not assumed); a second SMS arrives; no duplicate delivery of the same send.
+
+**P6. Kill switch** — set `PHONE_VERIFICATION_ENABLED=false` (or remove it) in the staging
+project, redeploy, trigger a send directly through the Auth API
+(`supabase.auth.updateUser({ phone })` from a signed-in console). Expected: the call fails, **no
+SMS arrives and the SMSMessenger dashboard shows no new message**. Restore the flag afterwards.
+
+**P7. Non-SA number** — with the flag on, call `updateUser({ phone })` with a non-South-African
+number from a signed-in console. Expected: fails, no SMS, nothing in the SMSMessenger dashboard.
+
+**P8. Destination correctness** — for a user who **already has a verified number A**, change to a
+different number B. Expected: the code arrives at B and **not** at A. (This proves the hook
+uses `sms.phone`, not `user.phone`, and that `sms.phone` is present for `phone_change`.)
+
+**P9. Provider failure** — only if it can be done safely and without exhausting credit (for
+example temporarily setting a wrong `SMSMESSENGER_API_TOKEN` **in staging**). Expected: the
+send fails, the UI shows "unavailable", no verification occurs. Do **not** drain the balance to
+test this; mark `UNVERIFIED` otherwise. Restore the token afterwards.
+
+**P10. Throttling** — (a) request sends for one user until refused (hook limit: 5/hour per user;
+the UI path has its own limits — to isolate the hook's limits use the direct Auth path in P11);
+(b) send to one destination repeatedly (hook limit: 3/hour per number, across users).
+Expected: refusals at the limits, no SMS beyond them. Optionally set
+`PHONE_GLOBAL_SMS_HOURLY_LIMIT` low on staging to see the global ceiling trip.
+
+**P11. Direct Auth path (the Phase 15A.2 finding)** — from a signed-in browser console on the
+staging site, call `supabase.auth.updateUser({ phone })` repeatedly **bypassing Bambini's server
+actions**. Expected: the hook's own per-user/per-destination limits still refuse, and a
+non-SA number or disabled flag is refused, with no SMS. This is the test that proves the
+action-level throttles are no longer the only line of defence.
+
+### Results table (fill in; leave `UNVERIFIED` if not run)
+
+| Test | Network | Masked id | Sent at | Received at | Latency | Verified OK | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| P1/P2 | Vodacom | | | | | | UNVERIFIED |
+| P1/P2 | MTN | | | | | | UNVERIFIED |
+| P1/P2 | Cell C | | | | | | UNVERIFIED |
+| P1/P2 | Telkom | | | | | | UNVERIFIED |
+| P3 wrong code | | | | | | | UNVERIFIED |
+| P4 expired | | | | | | | UNVERIFIED |
+| P5 resend | | | | | | | UNVERIFIED |
+| P6 kill switch | | | | | | | UNVERIFIED |
+| P7 non-SA | | | | | | | UNVERIFIED |
+| P8 destination | | | | | | | UNVERIFIED |
+| P9 provider failure | | | | | | | UNVERIFIED |
+| P10 throttling | | | | | | | UNVERIFIED |
+| P11 direct Auth path | | | | | | | UNVERIFIED |
+
+### Provider behaviour to record (do not infer — write `UNVERIFIED` if not observed)
+
+SMS delivery success rate and latency per network; sender ID shown; HTTP behaviour on success;
+HTTP behaviour on failure and on an invalid recipient (the adapter treats anything other than
+OK + JSON + `messageId` + no `error` as failure); behaviour when credit runs out (only if
+met naturally); duplicate-SMS behaviour; dashboard visibility of message text.
+
+### Hook payload findings to record
+
+`sms.phone` present on `phone_change` and equal to the new number (P8 proves it indirectly).
+`sms.otp` is a 6-digit string. `sms.sms_type` and `metadata` contents: **UNVERIFIED** unless
+the separately-approved key-names-only diagnostic is run. Do not claim `metadata` contains an
+IP unless it is actually observed.
+
+### Logging and access observations (tick after the pilot)
+
+- [ ] Vercel runtime logs for `/api/hooks/send-sms`: no OTP, no full number, no token, no
+      webhook secret, no service-role key. (Expected: the handler logs nothing; only Vercel's
+      own request line.)
+- [ ] Supabase Auth logs and any hook logs: no OTP or full number beyond what Supabase itself
+      records (note what it does record).
+- [ ] SMSMessenger dashboard shows the message text (including the code) — confirm only named
+      operators have access and 2FA is on if offered.
+- [ ] No secret, token, OTP or full number was pasted into this file, a commit, or a ticket.
+
+### Pricing to confirm in writing from SMSMessenger (published table is NOT proof)
+
+Per-SMS price at the pilot volume; VAT; whether OTP traffic costs the same; minimum purchase;
+credit expiry; setup/monthly fees; low-balance notifications. The public table
+(R0.29 → R0.20 ex VAT by pack size; credits do not expire; no setup/monthly fees; the "from
+R0.12" headline has no stated volume tier) is what was published when last checked — record
+the **account-specific** answers here: `UNVERIFIED`.
+
+### End-of-pilot production safety check
+
+- [ ] Production `PHONE_VERIFICATION_ENABLED` unset; production Send SMS hook disabled; production
+      SMSMessenger/hook variables unset; production migrations still unapplied; no production
+      SMS sent.

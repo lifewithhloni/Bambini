@@ -256,6 +256,122 @@ repository. Local hook testing: see the commented-out
 `[auth.hook.send_sms]` block in `supabase/config.toml` (supported by CLI
 2.118.0; disabled by default).
 
+## Staging environment for the SMS pilot (Phase 15A.4 — required BEFORE any real SMS)
+
+**Status: NOT SET UP.** Nothing in this repository, and nothing reachable from
+the development environment, shows a separate staging Supabase project or a
+separate staging Vercel deployment: there is no `.vercel/` link, no staging
+config or environment file, `.env.local` points at a placeholder Supabase URL,
+and step 5 above records that the choice (shared vs separate Supabase for
+Preview) was deliberately left open. So the pilot has **not** been run and no
+real SMS has been sent. Until the checks below pass, treat every Preview URL
+as potentially sharing the production Supabase project.
+
+**Why a real staging project is non-negotiable for the pilot:** the hook sends
+real texts, and enabling the Phone provider changes the Auth API surface
+(phone sign-in becomes reachable). Neither may happen on the production
+Supabase project, and the pilot's SMSMessenger credentials must never be
+readable by ordinary Preview deployments.
+
+### Recommended topology
+
+| Piece | Pilot choice | Why |
+| --- | --- | --- |
+| Supabase | A **new, separate project** ("bambini-staging") | Isolated Auth, data and hook config; the hook URL and secret are per project |
+| Vercel | A **separate Vercel project** from the same GitHub repo, with its **Production Branch set to a `staging` branch** | Gives a stable domain for the hook URL; its environment variables can never reach the real production project or ordinary PR previews |
+| Payments in staging | `PAYMENT_PROVIDER=mock` | In that project Vercel reports `VERCEL_ENV=production`, so the PayFast guard would refuse a sandbox PayFast there. The phone pilot needs no payments |
+| Alternative | One Vercel project + a `staging` branch with Preview variables scoped to that branch only (or a Vercel Custom Environment, if your plan has it) | Workable, but a mis-scoped variable then leaks to every PR preview — the reason the separate project is recommended |
+
+### Manual setup (do in this order; none of it is done)
+
+1. **Create the staging Supabase project** (same Postgres major version, 17). Record its
+   project ref. Confirm the ref is **different from production's** before
+   continuing.
+2. **Apply the migrations to staging only.** With the Supabase CLI:
+   `supabase link --project-ref <STAGING ref>` then `supabase db push`. First run
+   `supabase projects list` and read the linked ref back — a wrong link here
+   would apply the pending phone migrations to production. This includes
+   `20261016090000` and `20261016090100`.
+3. **Create test users in the Dashboard** (Authentication → Users → Add user, auto-confirm
+   email) instead of relying on signup emails (default Supabase email sending is
+   heavily rate-limited). Give them `Correct-Horse9`-style policy-compliant passwords you
+   keep out of the repo.
+4. **Staging Supabase Auth configuration:**
+   - Authentication → Providers → **Phone**: enable. Do **not** enter any SMS
+     provider credentials (the hook replaces Supabase's own sending).
+   - Authentication → Hooks → **Send SMS**: enable, type HTTPS, URL
+     `https://<staging domain>/api/hooks/send-sms`. Supabase generates the
+     `v1,whsec_…` secret — copy it straight into the staging Vercel project as
+     `SEND_SMS_HOOK_SECRET`; never paste it anywhere else.
+   - Authentication → Rate limits: SMS per hour small for the pilot (e.g. 30), token
+     verifications as default or lower.
+   - Authentication → Providers → Phone → **SMS OTP expiry**: 300–600 seconds if the
+     dashboard allows it (not verified here — record what it actually permits).
+   - CAPTCHA (hCaptcha/Turnstile): optional for the pilot; if enabled, the UI
+     needs the matching site-key work (not built) — leave off and note it.
+   - Site URL / redirect allowlist: the staging domain.
+   - **Do not** set `[auth.sms.test_otp]` (a config-file/CLI feature; it must never
+     be applied to hosted projects).
+5. **SMSMessenger pilot account:** register, take the free 100-SMS trial or buy the
+   **smallest** pack; **ask their support, in writing:** the exact per-SMS price
+   for your volume and whether OTP traffic is the same price, VAT treatment,
+   minimum purchase, credit expiry, sender-ID options (and whether a branded
+   ID is possible/needed for SA), whether they provide low-balance alerts, and
+   whether the API token can be scoped or an IP allowlist applied. Set the
+   low-balance alert; give dashboard access to named operators only (message
+   logs contain the codes) and enable any 2FA they offer. If a second account
+   is possible, use a **pilot-only** account so the production token is never
+   exposed to staging.
+6. **Staging Vercel project:** import the repo, set Production Branch = `staging`,
+   create the `staging` branch from the commit to test (a human action — this
+   assistant does not push branches). Set **staging-only** values:
+   `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY`
+   (all from the **staging** Supabase project), `NEXT_PUBLIC_SITE_URL` (staging
+   domain), `PAYMENT_PROVIDER=mock`, `SEND_SMS_HOOK_SECRET`, `SMSMESSENGER_EMAIL`,
+   `SMSMESSENGER_API_TOKEN`, `PHONE_THROTTLE_HASH_SECRET` (generated:
+   `openssl rand -base64 32`), optionally `PHONE_GLOBAL_SMS_HOURLY_LIMIT` (e.g. 20).
+   Start with `PHONE_VERIFICATION_ENABLED` **unset**.
+7. **Pin the function region** near the staging Supabase region (the hook has a
+   5-second total budget and makes up to three throttle RPCs plus the provider
+   call; record the real hook latency from the Vercel logs during the pilot).
+8. Run the **pre-flight isolation checks** below, then follow the pilot runbook in
+   [SMOKE_TESTS.md](SMOKE_TESTS.md#phone-verification-pilot-phase-15a4).
+
+### Pre-flight isolation checks (all must be true before the first SMS)
+
+- [ ] Staging site's `NEXT_PUBLIC_SUPABASE_URL` host differs from production's (compare the
+      project refs; do this in the Vercel UI of each project, not from memory).
+- [ ] The staging Vercel project is a different project from production, and the
+      `SMSMESSENGER_*` / `SEND_SMS_HOOK_SECRET` / `PHONE_THROTTLE_HASH_SECRET` variables
+      exist **only** there (check the production project and every Preview scope).
+- [ ] Production: `PHONE_VERIFICATION_ENABLED` is unset, `SEND_SMS_HOOK_SECRET` and
+      `SMSMESSENGER_*` are unset, and Supabase → Auth → Hooks → Send SMS is disabled
+      (read-only check in the dashboard).
+- [ ] Production migrations `20261016090000`/`20261016090100` are still unapplied
+      (unless separately approved).
+- [ ] Optional external proof the production endpoint cannot send: an **unsigned**
+      `curl -i -X POST https://<production domain>/api/hooks/send-sms` must return
+      `401` (secret configured) or `500` (secret absent) — never `200`. (Not run by
+      this assistant: it would be a request against production.)
+- [ ] Test numbers are internal SIMs you control, one per network.
+
+### Safe observation of the hook payload
+
+The hook deliberately logs nothing, so the real payload shape cannot be read
+from Bambini's logs. Evidence available without code changes: TEST P8
+(the text arrives at the **new** number) proves `sms.phone` is present and used
+for `phone_change`, because the hook refuses to send without it. **Not
+observable without a code change:** the contents of `sms.sms_type` and
+`metadata` (and whether `metadata` carries an IP). If the team wants that,
+the proposal is a temporary, staging-only diagnostic that logs **only key names
+and value types** (never values), shipped on the `staging` branch and removed
+afterwards — it needs separate approval; it is not part of this phase.
+
+### Production activation remains a separate, later decision
+
+Nothing in this section enables production SMS. After a PASS pilot, follow
+"Connecting SMS" above for production.
+
 ## Known, deliberately out-of-scope gaps
 
 Carried forward from Phase 15A/15B, not addressed here (see those
