@@ -176,8 +176,10 @@ describe("updateProfileSchema", () => {
     expect(updateProfileSchema.safeParse({ fullName: "Bob Seller", phone: "" }).success).toBe(true);
   });
 
-  it("accepts a full name with a phone", () => {
-    expect(updateProfileSchema.safeParse({ fullName: "Bob Seller", phone: "+27 82 555 0000" }).success).toBe(true);
+  it("ignores a submitted phone entirely — a phone is only ever set through the verified Auth OTP flow, never a profile edit", () => {
+    const r = updateProfileSchema.safeParse({ fullName: "Bob Seller", phone: "+27 82 555 0000" });
+    expect(r.success).toBe(true);
+    if (r.success) expect((r.data as Record<string, unknown>).phone).toBeUndefined();
   });
 
   it("rejects an empty full name", () => {

@@ -76,12 +76,8 @@ export const signInSchema = z.object({
 
 export const updateProfileSchema = z.object({
   fullName: fullNameSchema,
-  phone: z
-    .string()
-    .trim()
-    .max(30, "Phone number is too long")
-    .optional()
-    .or(z.literal("")),
+  // No phone field (Phase 15A.1): a phone is only ever set through the
+  // verified Supabase Auth OTP flow (src/server/phone/), never a profile edit.
 });
 
 export type SignUpInput = z.infer<typeof signUpSchema>;

@@ -4,6 +4,7 @@ import { getAccountOverview } from "@/server/account/getAccountOverview";
 import { getVerificationStatus } from "@/server/verification/getVerificationStatus";
 import { BUYER_ORDERS_HREF, BUSINESSES_HREF, LOCATION_HREF, MESSAGES_HREF, NOTIFICATIONS_HREF, SAVED_HREF, SELLER_LINKS, VERIFICATION_HREF, businessHref } from "@/lib/account/accountLinks";
 import { ProfileForm } from "./ProfileForm";
+import { formatPhoneForDisplay } from "@/server/phone/normalizePhone";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
@@ -131,7 +132,18 @@ export default async function AccountPage() {
 
       <section className="flex flex-col gap-3">
         <h2 className="text-heading-card text-brand-ink">Profile</h2>
-        <ProfileForm fullName={overview.fullName} phone={overview.phone} />
+        <ProfileForm fullName={overview.fullName} />
+        <Card>
+          <div className="flex items-center justify-between gap-3 text-body-small">
+            <span className="text-brand-muted">Phone</span>
+            <span className="text-brand-ink">
+              {verification.phoneConfirmed && verification.authPhone ? formatPhoneForDisplay(verification.authPhone) : "Not verified"}
+            </span>
+          </div>
+          <Link href={VERIFICATION_HREF} className="mt-2 inline-block text-body-small font-medium text-bambini-forest hover:underline">
+            {verification.phoneConfirmed ? "Manage phone" : "Verify your phone"}
+          </Link>
+        </Card>
       </section>
     </div>
   );

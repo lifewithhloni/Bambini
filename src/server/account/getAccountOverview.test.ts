@@ -30,7 +30,7 @@ vi.mock("@/server/business/getMyBusinesses", () => ({ getMyBusinesses: getMyBusi
 
 const { getAccountOverview } = await import("./getAccountOverview");
 
-const profileRow = { full_name: "Alice", phone: "0821234567", created_at: "2026-01-01T00:00:00Z", location_id: "loc-1" };
+const profileRow = { full_name: "Alice", created_at: "2026-01-01T00:00:00Z", location_id: "loc-1" };
 
 beforeEach(() => {
   for (const k of Object.keys(queues)) delete queues[k];
@@ -52,8 +52,8 @@ describe("getAccountOverview", () => {
     queues.profiles = [{ data: profileRow, error: null }];
     await getAccountOverview("user-1");
     const selected = (chains.profiles[0].select as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(selected.split(",").map((s) => s.trim()).sort()).toEqual(["created_at", "full_name", "location_id", "phone"]);
-    expect(selected).not.toMatch(/role|verification|avatar|standing|rating/);
+    expect(selected.split(",").map((s) => s.trim()).sort()).toEqual(["created_at", "full_name", "location_id"]);
+    expect(selected).not.toMatch(/role|verification|avatar|standing|rating|phone/);
   });
 
   it("resolves the saved location as suburb/city only — never coordinates, a street address, or the row's id", async () => {

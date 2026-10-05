@@ -4,7 +4,6 @@ import { getMyBusinesses, type MyBusiness } from "@/server/business/getMyBusines
 
 export type AccountOverview = {
   fullName: string;
-  phone: string | null;
   memberSince: string;
   /** Approximate area only (suburb/city) — never coordinates, a street address, or the location row's id. */
   savedArea: { suburb: string | null; city: string | null } | null;
@@ -26,7 +25,7 @@ export type AccountOverview = {
 export async function getAccountOverview(userId: string): Promise<AccountOverview | null> {
   const supabase = await createClient();
 
-  const { data: profile, error } = await supabase.from("profiles").select("full_name, phone, created_at, location_id").eq("id", userId).single();
+  const { data: profile, error } = await supabase.from("profiles").select("full_name, created_at, location_id").eq("id", userId).single();
   if (error || !profile) return null;
 
   let savedArea: AccountOverview["savedArea"] = null;
@@ -37,5 +36,5 @@ export async function getAccountOverview(userId: string): Promise<AccountOvervie
 
   const businesses = await getMyBusinesses(userId);
 
-  return { fullName: profile.full_name, phone: profile.phone, memberSince: profile.created_at, savedArea, businesses };
+  return { fullName: profile.full_name, memberSince: profile.created_at, savedArea, businesses };
 }

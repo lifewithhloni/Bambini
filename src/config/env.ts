@@ -24,6 +24,11 @@ const serverEnvSchema = z.object({
   // PayFast host; anything else — including unset — stays sandbox. See
   // getPayFastHosts() for why the safer default is sandbox, not live.
   PAYFAST_SANDBOX: z.string().optional(),
+  // Phase 15A.1: "true" only once an SMS provider is connected to Supabase
+  // Auth. A UI/action availability gate ONLY — read directly by
+  // isPhoneVerificationEnabled() (src/server/phone/config.ts); it can
+  // never mark a phone verified or relax can_transact().
+  PHONE_VERIFICATION_ENABLED: z.string().optional(),
   DELIVERY_PROVIDERS: z.string().default("mock"),
   // Phase 7B: a technical rate-limit on how often trackingService.ts is
   // allowed to call DeliveryProvider.getStatus() for the same delivery,

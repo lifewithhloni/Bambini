@@ -1,30 +1,30 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/server/auth/requireUser";
-
-/**
- * No SMS provider is configured anywhere in this project
- * (supabase/config.toml has no [auth.sms] section) — Supabase's phone-OTP
- * flow cannot actually run without one. This is a deliberate, explicit
- * fact the UI surfaces (per the Phase 5 brief: "do not pretend a phone
- * is verified... clearly indicate that phone verification is currently
- * unavailable/not configured"), not a placeholder to quietly remove
- * later. phone_confirmed_at will genuinely be null for every real
- * signup until a provider is added — see DECISIONS.md.
- */
-export const PHONE_VERIFICATION_AVAILABLE = false;
+import { isPhoneVerificationEnabled } from "@/server/phone/config";
+import { e164FromAuthPhone } from "@/server/phone/normalizePhone";
 
 export type IdentityStatus = "not_submitted" | "pending" | "verified" | "rejected";
 
 export type VerificationStatus = {
   emailConfirmed: boolean;
   phoneConfirmed: boolean;
+  /**
+   * Whether the phone-verification FLOW is offered (PHONE_VERIFICATION_ENABLED
+   * — i.e. an SMS provider is connected). Purely a UI gate: it never makes
+   * phoneConfirmed true and never affects canTransact.
+   */
+  phoneVerificationAvailable: boolean;
+  /** The phone Supabase Auth holds (E.164), or null. Confirmed only if phoneConfirmed. */
+  authPhone: string | null;
+  /** A number awaiting its SMS code (Auth's new_phone), or null. Not yet verified. */
+  pendingPhone: string | null;
   identityStatus: IdentityStatus;
   rejectionReason: string | null;
   canTransact: boolean;
 };
 
 /**
- * Email/phone confirmation comes straight off requireUser()'s own
+ * Email/phone confirmation (and the phone number itself) comes straight off requireUser()'s own
  * server-revalidated Auth session (getUser(), not a decoded cookie) —
  * no database round-trip, and nothing here is a stored/cacheable value a
  * client could ever influence. Identity status is the latest
@@ -60,6 +60,9 @@ export async function getVerificationStatus(): Promise<VerificationStatus> {
   return {
     emailConfirmed: user.email_confirmed_at != null,
     phoneConfirmed: user.phone_confirmed_at != null,
+    phoneVerificationAvailable: isPhoneVerificationEnabled(),
+    authPhone: e164FromAuthPhone(user.phone),
+    pendingPhone: e164FromAuthPhone(user.new_phone),
     identityStatus,
     rejectionReason: identityStatus === "rejected" ? (latest?.notes ?? null) : null,
     canTransact: canTransactData === true,

@@ -1466,6 +1466,30 @@ export type Database = {
         };
         Returns: undefined;
       };
+      // Phase 15A.1. SECURITY DEFINER, EXECUTE service_role only (see
+      // 20261016090000_phone_verification_throttle.sql) — phone
+      // verification abuse counters; holds no phone numbers or OTPs.
+      phone_throttle_hit: {
+        Args: {
+          p_subject: string;
+          p_action: string;
+          p_max: number;
+          p_window_seconds: number;
+          p_cooldown_seconds?: number;
+          p_record?: boolean;
+        };
+        Returns: {
+          allowed: boolean;
+          retry_after_seconds: number;
+        }[];
+      };
+      phone_throttle_reset: {
+        Args: {
+          p_subject: string;
+          p_action: string;
+        };
+        Returns: undefined;
+      };
       // NOT SECURITY DEFINER — EXECUTE is restricted to service_role
       // only (see the migration); called exclusively by the PayFast
       // webhook route via the admin/service-role client, never via a

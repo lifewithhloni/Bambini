@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 
-type User = { id: string; email_confirmed_at: string | null; phone_confirmed_at: string | null };
+type User = { id: string; email_confirmed_at: string | null; phone_confirmed_at: string | null; phone?: string; new_phone?: string };
 const requireUserMock = vi.fn<() => Promise<User>>();
 vi.mock("@/server/auth/requireUser", () => ({ requireUser: requireUserMock }));
 
@@ -31,6 +31,10 @@ vi.mock("@/lib/supabase/server", () => ({
 const { getVerificationStatus } = await import("./getVerificationStatus");
 
 const confirmedUser: User = { id: "u1", email_confirmed_at: "2026-01-01", phone_confirmed_at: null };
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 beforeEach(() => {
   requireUserMock.mockReset();
@@ -71,6 +75,57 @@ describe("getVerificationStatus", () => {
     const status = await getVerificationStatus();
     expect(status.emailConfirmed).toBe(true);
     expect(status.phoneConfirmed).toBe(true);
+  });
+
+  it("phone verification availability is configuration-driven (PHONE_VERIFICATION_ENABLED), off by default", async () => {
+    expect((await getVerificationStatus()).phoneVerificationAvailable).toBe(false);
+    vi.stubEnv("PHONE_VERIFICATION_ENABLED", "false");
+    expect((await getVerificationStatus()).phoneVerificationAvailable).toBe(false);
+    vi.stubEnv("PHONE_VERIFICATION_ENABLED", "true");
+    expect((await getVerificationStatus()).phoneVerificationAvailable).toBe(true);
+  });
+
+  it("the availability flag NEVER bypasses the phone requirement: enabling it does not make an unconfirmed phone confirmed, nor canTransact true", async () => {
+    vi.stubEnv("PHONE_VERIFICATION_ENABLED", "true");
+    requireUserMock.mockResolvedValue({ id: "u1", email_confirmed_at: "2026-01-01", phone_confirmed_at: null });
+    canTransact = false; // what can_transact() says without phone_confirmed_at
+    const status = await getVerificationStatus();
+    expect(status.phoneVerificationAvailable).toBe(true);
+    expect(status.phoneConfirmed).toBe(false);
+    expect(status.canTransact).toBe(false);
+  });
+
+  it("with the flow disabled, an unconfirmed phone stays unconfirmed and canTransact stays false (the DB gate is unchanged)", async () => {
+    vi.stubEnv("PHONE_VERIFICATION_ENABLED", "false");
+    requireUserMock.mockResolvedValue({ id: "u1", email_confirmed_at: "2026-01-01", phone_confirmed_at: null });
+    canTransact = false;
+    const status = await getVerificationStatus();
+    expect(status.phoneVerificationAvailable).toBe(false);
+    expect(status.phoneConfirmed).toBe(false);
+    expect(status.canTransact).toBe(false);
+  });
+
+  it("the phone shown is Auth's (auth.users.phone / new_phone) — never profiles.phone, which is never selected", async () => {
+    requireUserMock.mockResolvedValue({
+      id: "u1",
+      email_confirmed_at: "2026-01-01",
+      phone_confirmed_at: "2026-01-02",
+      phone: "27821234567",
+      new_phone: "27831234567",
+    });
+    const status = await getVerificationStatus();
+    expect(status.authPhone).toBe("+27821234567");
+    expect(status.pendingPhone).toBe("+27831234567");
+    expect(fromCalls).not.toContain("profiles");
+    expect(selectCalls.join(" ")).not.toMatch(/phone/);
+  });
+
+  it("a pending (unconfirmed) number is reported as pending, never as confirmed", async () => {
+    requireUserMock.mockResolvedValue({ id: "u1", email_confirmed_at: "2026-01-01", phone_confirmed_at: null, new_phone: "27821234567" });
+    const status = await getVerificationStatus();
+    expect(status.phoneConfirmed).toBe(false);
+    expect(status.pendingPhone).toBe("+27821234567");
+    expect(status.authPhone).toBeNull();
   });
 
   it("G. a rejected submission reports 'rejected' with the reviewer's reason (the admin form labels it 'shown to the user if rejected')", async () => {

@@ -1,7 +1,7 @@
 import "server-only";
 import * as Sentry from "@sentry/nextjs";
 
-export type OperationalArea = "payfast_webhook" | "delivery_booking" | "payout";
+export type OperationalArea = "payfast_webhook" | "delivery_booking" | "payout" | "phone_verification";
 
 /**
  * The one, deliberately narrow way this codebase reports an operational

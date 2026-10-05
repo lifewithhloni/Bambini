@@ -125,6 +125,60 @@ default; every provider-specific key above is a placeholder for an
 adapter that doesn't exist in the codebase yet — setting one has no
 effect until the matching adapter is written and registered.
 
+## Phone verification (Phase 15A.1)
+
+| Variable | Visibility | Secret? | Local | Preview | Production |
+| --- | --- | --- | --- | --- | --- |
+| `PHONE_VERIFICATION_ENABLED` | server-only | No | unset/`false` | unset/`false` | `true` **only after** an SMS provider is connected and tested |
+
+A UI/action availability gate **only**. With it unset or anything other
+than `true`, the verification page says phone verification is
+unavailable and every phone action refuses without calling Supabase.
+Setting it never marks a phone verified and never relaxes
+`can_transact()` — the database still requires
+`auth.users.phone_confirmed_at`, which only Supabase Auth sets after a
+real OTP check. There is no manual bypass. No SMS provider credentials
+exist anywhere in this repository.
+
+**`supabase/config.toml` `[auth.sms.test_otp]` is local/test only — never use it in hosted production.**
+It lists one fixture number with a fixed code, honoured only by a *local*
+Supabase stack (and only once a provider is enabled there). Facts, all
+checked in the repository:
+
+- It is **not an environment variable** and appears in no Vercel/production
+  variable list; nothing in the app reads it.
+- Nothing automates copying it to a hosted project: `npm run db:migrate` is
+  `supabase db push` (migrations only, never config), the `Validate` GitHub
+  workflow runs no Supabase CLI command at all, and Vercel never reads
+  `config.toml`. The only way it could reach production is a **manual**
+  `supabase config push` — do not run that against production while this
+  block exists; hosted Auth is configured in the Dashboard, not from this file.
+- On a hosted project a fixed OTP would be a verification backdoor for that
+  number, which is why `src/server/phone/testOtpSafety.guard.test.ts` fails
+  the build if the block ever lists anything but the single fixture number,
+  or if any script/workflow starts running `supabase config push`.
+
+### Phone verification throttling (what protects SMS spend and code guessing)
+
+- **The per-user throttle is authoritative.** It is keyed on the signed-in
+  user's id, always applies, and carries the resend cooldown (60s), the send
+  cap (5/hour) and the code-attempt lockout (5 per 15 minutes).
+- **IP throttling is a secondary abuse control** (20 sends/hour, 30
+  code checks/hour per IP). It uses `x-forwarded-for` (first entry) — correct
+  **on Vercel**, which sets that header itself. Behind a different proxy that
+  lets a client prepend its own value, the IP limit can be evaded; the
+  per-user limit still holds. The address is stored only as a truncated
+  one-way hash.
+- **No IP present → only the IP limit is skipped**; the per-user limits are
+  still enforced.
+- **Throttle storage failure fails closed**: if the throttle table/function
+  can't be reached (for example the migration isn't applied), the attempt is
+  refused with a "try again later" message and a monitoring event is
+  reported. Apply migrations `20261016090000` and `20261016090100` before
+  enabling `PHONE_VERIFICATION_ENABLED`.
+- Supabase Auth's own limits (`[auth.sms] max_frequency`,
+  `[auth.rate_limit]`/Dashboard equivalents) sit underneath all of this.
+
 ## Observability (Phase 15B, C-1)
 
 | Variable | Visibility | Secret? | Local | Preview | Production |

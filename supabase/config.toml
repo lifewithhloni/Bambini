@@ -43,6 +43,39 @@ enable_signup = true
 # session until the user clicks the confirmation link.
 enable_confirmations = true
 
+[auth.sms]
+# Phase 15A.1 — phone verification foundation. NO SMS provider is
+# configured here on purpose: no [auth.sms.twilio]/[auth.sms.vonage]/…
+# block, no credentials, no provider chosen. Every key below was verified
+# against Supabase CLI 2.118.0 (it parses this file without error).
+#
+# enable_signup stays false: with it true and no provider enabled the CLI
+# prints "WARN: no SMS provider is enabled. Disabling phone login" and
+# switches it off anyway. When a provider IS connected, set it true for
+# local runs — it is the local "Phone provider" toggle that
+# auth.updateUser({ phone }) needs (otherwise Auth answers
+# phone_provider_disabled). See DEPLOYMENT.md "Connecting an SMS
+# provider" for the hosted equivalent and its sign-in side effect.
+enable_signup = false
+enable_confirmations = true
+template = "Your Bambini verification code is {{ .Code }}"
+# Minimum gap between SMS sends to one number; matches the app-level
+# resend cooldown (PHONE_LIMITS.send.userCooldownSeconds = 60).
+max_frequency = "60s"
+
+[auth.sms.test_otp]
+# LOCAL / TEST ONLY. Once a provider is enabled locally, a number listed
+# here never receives a real SMS and its code is the fixed value below,
+# so the real start -> verify flow can be exercised with no real SMS.
+# (Without an enabled provider the CLI disables phone login entirely, so
+# this block is inert until then.) Phone is the Auth form: country code,
+# no "+". 27820000001 is a South African mobile shape (passes
+# src/server/phone/normalizePhone.ts) used purely as a fixture.
+# NEVER apply this file to a hosted project (supabase config push) with
+# this block present — a fixed OTP for a number is a verification
+# backdoor there. See ENVIRONMENT.md.
+27820000001 = "123456"
+
 [storage]
 enabled = true
 file_size_limit = "10MiB"

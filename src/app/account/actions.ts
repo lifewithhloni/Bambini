@@ -17,12 +17,16 @@ export type UpdateProfileState = { error: string } | { success: true } | null;
  * enforcement — this query being correctly scoped is defense in depth,
  * not the security boundary itself.
  */
+/**
+ * Phone is intentionally not accepted or written here (Phase 15A.1): the
+ * verified phone lives in Supabase Auth and changes only through the
+ * OTP flow in src/server/phone/. profiles.phone is non-authoritative.
+ */
 export async function updateProfile(_prev: UpdateProfileState, formData: FormData): Promise<UpdateProfileState> {
   const user = await requireUser();
 
   const parsed = updateProfileSchema.safeParse({
     fullName: formData.get("fullName"),
-    phone: formData.get("phone"),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Please check your details and try again." };
@@ -31,7 +35,7 @@ export async function updateProfile(_prev: UpdateProfileState, formData: FormDat
   const supabase = await createClient();
   const { error } = await supabase
     .from("profiles")
-    .update({ full_name: parsed.data.fullName, phone: parsed.data.phone || null })
+    .update({ full_name: parsed.data.fullName })
     .eq("id", user.id);
 
   if (error) {

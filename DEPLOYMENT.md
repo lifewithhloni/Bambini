@@ -39,6 +39,7 @@ Phase 15C's own brief asked for.
 | `PAYFAST_PASSPHRASE` | unset | sandbox value | **live** value | **Secret** | Required once `PAYMENT_PROVIDER=payfast` |
 | `PAYFAST_SANDBOX` | unset/`true` | **must be `true` or unset** | **must be `false`** | Server-only | See the guard below |
 | `VERCEL_ENV` | not present | set automatically by Vercel | set automatically by Vercel | Server-only | Nothing to configure — Vercel provides it |
+| `PHONE_VERIFICATION_ENABLED` | unset | unset | `true` only after an SMS provider is connected | Server-only | Optional — leave off until SMS works |
 | `SENTRY_DSN` | unset (fully supported) | recommended | recommended | Server-only (not secret, but never public) | Optional |
 | `DELIVERY_PROVIDERS` | `mock` (default) | `mock` | `mock` until a real adapter exists | Server-only | Optional |
 | `DELIVERY_TRACKING_POLL_COOLDOWN_SECONDS` | `60` (default) | `60` | tune per real provider once selected | Server-only | Optional |
@@ -198,6 +199,37 @@ the resulting event actually appears in the Sentry project from step 7.
 This is the only way to confirm the DSN, project, and network path are
 all actually correct — nothing in the repository can prove this on its
 own.
+
+## Connecting an SMS provider (future step — NOT done in Phase 15A.1)
+
+Phase 15A.1 built everything around Supabase's native phone identity so
+connecting a provider is configuration, not code. No provider has been
+chosen and no credentials exist in the repository. When one is chosen:
+
+1. **Apply migrations `20261016090000_phone_verification_throttle.sql`** (adds the
+   service-role-only abuse-counter table; it holds no phone numbers or codes)
+   **and `20261016090100_revoke_client_write_profiles_phone.sql`** (removes client
+   INSERT/UPDATE on the legacy `profiles.phone`; stored values are untouched) to
+   production. Do this **before** enabling the flag — with the
+   flag on and the table missing, every send fails closed.
+2. In the Supabase Dashboard → Authentication → Providers → **Phone**: enable
+   it, choose the provider (Twilio / Twilio Verify / MessageBird / Vonage /
+   TextLocal are the native options), enter its credentials **in the
+   Dashboard only**, and set the SMS template. Keep the OTP length at 6
+   (`PHONE_LIMITS.otpLength`) or change both together.
+3. Set `[auth.rate_limit]` equivalents in the Dashboard (SMS sent per hour,
+   token verifications) — these sit under the app-level limits.
+4. Consider enabling CAPTCHA protection in the Dashboard.
+5. Understand the side effect: enabling the Phone provider also makes
+   phone-based sign-in/sign-up reachable at the Auth API (Bambini's UI
+   never offers it). A phone-only account still cannot transact without a
+   confirmed email and verified identity; decide whether that surface is
+   acceptable or must be restricted at the provider.
+6. Verify end to end on a **Preview** deployment with a real number, then set
+   `PHONE_VERIFICATION_ENABLED=true` in Production.
+
+**MANUAL PRODUCTION CONFIGURATION** — all of the above happens outside this
+repository.
 
 ## Known, deliberately out-of-scope gaps
 

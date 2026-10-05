@@ -17,7 +17,13 @@ function SaveButton() {
   );
 }
 
-export function ProfileForm({ fullName, phone }: { fullName: string; phone: string | null }) {
+/**
+ * Name only. The phone number is deliberately NOT editable here: the
+ * verified phone is Supabase Auth's (auth.users.phone, confirmed by an SMS
+ * code on /account/verification), and a free-text profile field would be
+ * a second, unverified source of truth. profiles.phone is non-authoritative.
+ */
+export function ProfileForm({ fullName }: { fullName: string }) {
   const [state, formAction] = useActionState(updateProfile, null);
 
   return (
@@ -28,13 +34,6 @@ export function ProfileForm({ fullName, phone }: { fullName: string; phone: stri
             Full name
           </label>
           <input id="fullName" name="fullName" type="text" autoComplete="name" defaultValue={fullName} required className={inputVariants()} />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label htmlFor="phone" className="text-body-small font-medium text-brand-ink">
-            Phone <span className="text-brand-muted">(optional)</span>
-          </label>
-          <input id="phone" name="phone" type="tel" autoComplete="tel" defaultValue={phone ?? ""} className={inputVariants()} />
         </div>
 
         {state && "error" in state && <Alert tone="danger">{state.error}</Alert>}

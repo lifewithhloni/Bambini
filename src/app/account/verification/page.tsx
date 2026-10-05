@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { getVerificationStatus, PHONE_VERIFICATION_AVAILABLE } from "@/server/verification/getVerificationStatus";
+import { getVerificationStatus } from "@/server/verification/getVerificationStatus";
+import { requireUser } from "@/server/auth/requireUser";
+import { peekSendCooldownSeconds } from "@/server/phone/throttle";
+import { phoneBadgeState } from "@/server/phone/uiState";
+import { PhoneVerification } from "./PhoneVerification";
 import { VerificationForm } from "./VerificationForm";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -10,6 +14,7 @@ import type { BadgeTone } from "@/lib/ui/variants";
 // One specific signed-in user's own verification state — never statically cached.
 export const dynamic = "force-dynamic";
 
+const PHONE_LABELS = { verified: "Verified", awaiting_code: "Awaiting code", not_verified: "Not verified", unavailable: "Currently unavailable" } as const;
 const IDENTITY_LABELS = { not_submitted: "Not submitted", pending: "Pending review", verified: "Verified", rejected: "Rejected" } as const;
 const IDENTITY_TONES: Record<keyof typeof IDENTITY_LABELS, BadgeTone> = { not_submitted: "neutral", pending: "warning", verified: "success", rejected: "danger" };
 
@@ -25,6 +30,9 @@ const IDENTITY_TONES: Record<keyof typeof IDENTITY_LABELS, BadgeTone> = { not_su
  */
 export default async function VerificationPage() {
   const status = await getVerificationStatus();
+  const phoneState = phoneBadgeState(status);
+  // Read-only peek (consumes no attempt) so a page reload mid-flow still shows the real resend countdown.
+  const initialCooldownSeconds = status.phoneVerificationAvailable && status.pendingPhone ? await peekSendCooldownSeconds((await requireUser("/account/verification")).id) : 0;
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-12">
@@ -54,18 +62,29 @@ export default async function VerificationPage() {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-brand-muted">Phone</span>
-            {PHONE_VERIFICATION_AVAILABLE ? (
-              <Badge tone={status.phoneConfirmed ? "success" : "neutral"}>{status.phoneConfirmed ? "Verified" : "Not verified"}</Badge>
+            {phoneState === "verified" ? (
+              <Badge tone="success">
+                <Check className="h-3 w-3" aria-hidden="true" />
+                Verified
+              </Badge>
             ) : (
-              <Badge tone="neutral">Currently unavailable</Badge>
+              <Badge tone="neutral">{PHONE_LABELS[phoneState]}</Badge>
             )}
           </div>
-          {!PHONE_VERIFICATION_AVAILABLE && (
+          {phoneState === "unavailable" && (
             <p className="text-caption text-brand-muted">
-              Phone verification isn&apos;t configured on Bambini yet. This isn&apos;t something you need to do — it&apos;s on our side.
+              Phone verification isn&apos;t available on Bambini yet. This isn&apos;t something you need to do — it&apos;s on our side.
             </p>
           )}
         </div>
+        {status.phoneVerificationAvailable && (
+          <PhoneVerification
+            phoneConfirmed={status.phoneConfirmed}
+            authPhone={status.authPhone}
+            pendingPhone={status.pendingPhone}
+            initialCooldownSeconds={initialCooldownSeconds}
+          />
+        )}
       </Card>
 
       <section className="flex flex-col gap-3">

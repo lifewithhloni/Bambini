@@ -36,13 +36,25 @@ describe("updateProfile action", () => {
 
     // Even if a malicious caller stuffed an "id" field into the form,
     // the action never reads it — only requireUser()'s verified id is used.
-    const result = await updateProfile(null, formData({ fullName: "Alice B", phone: "", id: "someone-elses-id" }));
+    const result = await updateProfile(null, formData({ fullName: "Alice B", id: "someone-elses-id" }));
 
     expect(result).toEqual({ success: true });
     expect(fromMock).toHaveBeenCalledWith("profiles");
-    expect(updateMock).toHaveBeenCalledWith({ full_name: "Alice B", phone: null });
+    expect(updateMock).toHaveBeenCalledWith({ full_name: "Alice B" });
     expect(eqMock).toHaveBeenCalledWith("id", "user-1");
     expect(revalidatePathMock).toHaveBeenCalledWith("/account");
+  });
+
+  it("never writes profiles.phone, even if a phone field is submitted — the phone is only changed through the verified Auth OTP flow", async () => {
+    requireUserMock.mockResolvedValue({ id: "user-1" });
+    eqMock.mockResolvedValue({ error: null });
+
+    await updateProfile(null, formData({ fullName: "Alice B", phone: "+27821234567" }));
+
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    const payload = (updateMock.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("phone");
+    expect(JSON.stringify(payload)).not.toContain("27821234567");
   });
 
   it("rejects invalid input before touching the database", async () => {
