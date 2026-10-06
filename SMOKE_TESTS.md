@@ -440,6 +440,40 @@ Pass/Fail: no duplicate / a duplicate appears.
 **N6. Your own notifications page** `[PRODUCTION READ-ONLY CHECK]`
 Pass/Fail: loads with real notifications / errors or shows nothing when notifications exist.
 
+## Reviews
+
+**RV1. Leave a review on a completed order** `[SANDBOX TEST]`
+Purpose: confirm the buyer review flow and that it updates the seller's rating.
+Prerequisites: a buyer and a seller; one order taken to `completed` (collection confirmed with the code, or delivery delivered).
+Steps: 1) As the buyer open `/account/orders/<id>`. 2) Choose a star rating, optionally a comment, submit.
+Expected result: the form is replaced by "Your review" (stars, comment, thank-you); the listing's seller card and (for a business seller) the storefront header now show the average and count.
+Pass/Fail: review shown read-only and the rating appears / form remains, error, or rating doesn't change.
+
+**RV2. No form before completion or for disputes** `[SANDBOX TEST]`
+Steps: 1) Open the buyer order page for an order that is pending, confirmed, cancelled or disputed.
+Expected result: no review form appears.
+Pass/Fail: correct / a form is shown.
+
+**RV3. One review per order** `[SANDBOX TEST]`
+Steps: 1) After RV1, reload the order page and look for a form. 2) Try submitting again from a stale tab.
+Expected result: no form; the stale submission is refused with "You've already reviewed this order."
+Pass/Fail: correct / a second review is created.
+
+**RV4. Only the buyer** `[SANDBOX TEST]`
+Steps: 1) As the seller (or a business staff member), open the order from the seller side.
+Expected result: no review form or review controls anywhere on seller pages.
+Pass/Fail: correct / any review form appears.
+
+**RV5. Business seller** `[SANDBOX TEST]`
+Steps: 1) Complete an order from a business listing and review it.
+Expected result: the rating appears on the business storefront, not on the owner's personal profile.
+Pass/Fail: correct / lands on the wrong seller.
+
+**RV6. Validation** `[SANDBOX TEST]`
+Steps: 1) Submit with no stars. 2) Submit a whitespace-only comment. 3) Try a comment over 1000 characters (the box stops at 1000; paste more).
+Expected result: clear messages; nothing saved.
+Pass/Fail: correct / anything is saved.
+
 ## Monitoring
 
 **MON1. Invalid PayFast webhook produces a Sentry event** `[PRODUCTION READ-ONLY CHECK]`

@@ -144,9 +144,15 @@ describe("delivery-report webhooks are intentionally NOT implemented", () => {
     }
   });
 
-  it("the hook adds no database objects: the newest migration is still the 15A.1 client-write revoke", () => {
-    const migrations = fs.readdirSync(path.join(ROOT, "supabase/migrations")).sort();
-    expect(migrations[migrations.length - 1]).toBe("20261016090100_revoke_client_write_profiles_phone.sql");
+  it("the hook adds no database objects: no migration after the 15A.1 phone migrations mentions the hook or its throttle namespaces", () => {
+    const dir = path.join(ROOT, "supabase/migrations");
+    const after = fs.readdirSync(dir).filter((f) => f > "20261016090100_revoke_client_write_profiles_phone.sql");
+    for (const f of after) {
+      expect(fs.readFileSync(path.join(dir, f), "utf8"), f).not.toMatch(/send_sms|sms hook|huser:|dest:|global:sms|phone_throttle/i);
+    }
+    // And the two 15A.1 phone migrations are the only phone-throttle migrations.
+    const phone = fs.readdirSync(dir).filter((f) => /phone/i.test(f));
+    expect(phone).toEqual(["20261016090000_phone_verification_throttle.sql", "20261016090100_revoke_client_write_profiles_phone.sql"]);
   });
 });
 

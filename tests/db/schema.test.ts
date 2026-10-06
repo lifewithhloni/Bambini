@@ -49,6 +49,7 @@ describe("database schema", () => {
     expect(names).toContain("profiles_public");
     expect(names).toContain("businesses_public");
     expect(names).toContain("product_locations_public");
+    expect(names).toContain("reviews_public");
   });
 
   it("resolves every foreign key with no dangling references", async () => {

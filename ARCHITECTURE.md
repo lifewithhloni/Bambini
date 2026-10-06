@@ -149,7 +149,10 @@ strategies are used, deliberately:
    `reviews`, `categories`, ...) — direct client reads/writes through RLS
    policies are the normal path, scoped to the owning user/business, or
    public where the product intentionally makes something public (active
-   listings, reviews, categories). Column-level grants add defense in
+   listings, categories). **Reviews are the exception since Phase 15B.1:**
+   writes go only through the `create_review()` function (no client
+   INSERT/UPDATE/DELETE) and public reads go through the `reviews_public`
+   view, which exposes neither the reviewer nor the order. Column-level grants add defense in
    depth on top of row-level policies: e.g. a user can `UPDATE` their own
    `profiles` row per RLS, but a column-level `REVOKE`/`GRANT` means only
    `full_name`, `avatar_url`, `phone`, `location_id` are actually

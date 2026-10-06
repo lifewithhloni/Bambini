@@ -487,6 +487,28 @@ export type Database = {
       // marking one's own notification read (column grant on read_at; the
       // timestamp itself is set by a trigger). `data` holds opaque reference
       // ids only; the deep link is derived by notificationHref().
+      // Phase 15B.1. One review per COMPLETED order, written ONLY through
+      // create_review() (buyer of the order; seller derived from the order).
+      // Clients hold no INSERT/UPDATE/DELETE and cannot read hidden_at or
+      // seller_response (reserved) — hence only the client-readable columns
+      // appear in Row, and Insert/Update are `never`. Public reads go through
+      // the reviews_public view. See 20261017090000_reviews_write_path.sql.
+      reviews: {
+        Row: {
+          id: string;
+          order_id: string;
+          reviewer_id: string;
+          seller_type: SellerType;
+          seller_profile_id: string | null;
+          business_id: string | null;
+          rating: number;
+          comment: string | null;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       notifications: {
         Row: {
           id: string;
@@ -1204,6 +1226,23 @@ export type Database = {
       };
     };
     Views: {
+      // Phase 15B.1. The ONLY public representation of reviews: hidden rows
+      // excluded; no reviewer id, no order id; reviewer shown as first name
+      // + last initial. Seller ids are present because public pages filter
+      // by them (they are already public via profiles_public/businesses_public).
+      reviews_public: {
+        Row: {
+          id: string;
+          seller_type: SellerType;
+          seller_profile_id: string | null;
+          business_id: string | null;
+          rating: number;
+          comment: string | null;
+          created_at: string;
+          reviewer_name: string;
+        };
+        Relationships: [];
+      };
       profiles_public: {
         Row: {
           id: string;
@@ -1700,6 +1739,19 @@ export type Database = {
       // and the total are derived entirely server-side, order-independent.
       request_business_payout: {
         Args: { p_business_id: string };
+        Returns: string;
+      };
+      // Phase 15B.1. Buyer-only; the ONLY review write path. Takes the order,
+      // a rating (integer 1-5) and an optional comment (trimmed, 1-1000
+      // chars); derives reviewer = auth.uid() and the seller from the order.
+      // Returns the new review id. Errors are fixed strings (see
+      // src/server/reviews/errors.ts).
+      create_review: {
+        Args: {
+          p_order_id: string;
+          p_rating: number;
+          p_comment?: string | null;
+        };
         Returns: string;
       };
       // Phase 9. Buyer-only — validates order.buyer_id = auth.uid() and

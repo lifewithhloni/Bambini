@@ -641,6 +641,47 @@ mechanism already established for `profiles`/`businesses` INSERT (see
 `20260920100000_restrict_insert_columns.sql`), applied to SELECT here;
 the only sanctioned read path is now `get_my_collection_code()`.
 
+**Phase 15B.1: Reviews MVP — one buyer review per completed order,
+written only through `create_review()`.** The model was already in the
+schema (`reviews`, `UNIQUE(order_id)`, rating 1–5, parent or business
+seller); the Phase 15B audit found the write path unusable and unsafe, and
+this phase fixed it without redesigning anything:
+
+- **Buyer-only, one per completed order.** `create_review(order, rating,
+  comment)` requires the caller to be the order's buyer, `status =
+  'completed'` and `completed_at` set, and no existing review. The reviewer
+  is `auth.uid()`; the seller (parent profile or business) is **derived from
+  the order** — a client cannot supply a reviewer, seller, business,
+  product, `seller_response`, `created_at` or `hidden_at`. Business
+  owners/staff are not reviewers unless they are independently the buyer.
+  A disputed order is not reviewable; if a dispute resolves back to
+  `completed`, it is again (once).
+- **Direct client writes are gone.** INSERT/UPDATE/DELETE were revoked from
+  `anon`/`authenticated` and the old insert policy dropped.
+- **Immutable in the MVP.** No edit or delete. **Seller replies are
+  deferred** (`seller_response` stays reserved and unreadable/unwritable by
+  clients). **Moderation UI is deferred**; `hidden_at` is only the reserved
+  hook — a hidden review leaves `reviews_public` and the seller's rating,
+  and the recompute trigger already handles hide/unhide.
+- **Rating cache is recomputed, not incremented.** The old trigger was not
+  `SECURITY DEFINER` and failed for every real buyer; it now locks the
+  seller row and recomputes `rating_count`/`rating_average` (2 dp) from
+  the visible reviews, so there is no rounding drift.
+- **Privacy.** The public representation is the `reviews_public` view
+  (no reviewer id, no order id; reviewer shown as first name + last
+  initial; hidden rows excluded). The base table is readable only by a
+  review's author (and admins), on a limited column list.
+- **Ratings feed cash eligibility.** `profiles/businesses.rating_average`
+  already drives `evaluate_cash_eligibility()` (`min_rating_average`,
+  seeded at 4). Before this phase no review could exist, so no seller could
+  meet that criterion; now ratings are live inputs to cash access. The
+  criteria, threshold and function are unchanged and no anti-fraud rule was
+  added; the existing floors (3 completed orders, identity verification,
+  no self-purchase) are what limit self-dealing. A test pins the
+  relationship.
+- No notification is created for a review, and no public review list page
+  was built (the seller card still shows the cached average and count).
+
 ## Open — needs product/stakeholder input before the relevant phase
 
 1. ~~Which payment provider first?~~ **Resolved in Phase 4B: PayFast**

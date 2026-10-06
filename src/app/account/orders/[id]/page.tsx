@@ -3,10 +3,12 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/requireUser";
 import { getOrder } from "@/server/orders/getOrder";
 import { getOrderDispute } from "@/server/disputes/getOrderDispute";
+import { getOrderReview } from "@/server/reviews/getOrderReview";
 import { getSignedImageUrls } from "@/server/listings/imageUrls";
 import { OrderDetailView } from "@/components/orders/OrderDetailView";
 import { CollectionCodeDisplay } from "@/components/orders/CollectionCodeDisplay";
 import { DisputeSection } from "@/components/orders/DisputeSection";
+import { ReviewSection } from "@/components/reviews/ReviewSection";
 import { CancelOrderButton } from "@/components/orders/CancelOrderButton";
 import { Alert } from "@/components/ui/Alert";
 import { buttonVariants } from "@/lib/ui/variants";
@@ -29,6 +31,8 @@ export default async function BuyerOrderDetailPage({ params }: { params: Promise
   const imageUrls = order.item?.coverImagePath ? await getSignedImageUrls([order.item.coverImagePath]) : {};
   const imageUrl = order.item?.coverImagePath ? (imageUrls[order.item.coverImagePath] ?? null) : null;
   const dispute = await getOrderDispute(order.id);
+  // RLS-scoped to the buyer's own review of this order (null if none).
+  const review = await getOrderReview(order.id);
 
   // Mirrors cancel_pending_delivery_order()'s own eligibility exactly
   // (see 20261001090000_delivery_reliability.sql) — a UI convenience for
@@ -44,6 +48,8 @@ export default async function BuyerOrderDetailPage({ params }: { params: Promise
       <OrderDetailView order={order} viewerRole="buyer" imageUrl={imageUrl} />
 
       <DisputeSection orderId={order.id} orderStatus={order.status} dispute={dispute} viewerRole="buyer" />
+
+      <ReviewSection orderId={order.id} orderStatus={order.status} review={review} />
 
       {order.fulfilment_type === "collection" && order.status === "confirmed" && <CollectionCodeDisplay orderId={order.id} />}
 
